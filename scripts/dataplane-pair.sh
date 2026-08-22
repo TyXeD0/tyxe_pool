@@ -105,7 +105,7 @@ backup_all(){
   NODE_BACKUP_DIR="$BACKUP_ROOT/$NODE_ID"
   install -d -m 700 "$NODE_BACKUP_DIR"
   TELEMT_BACKUP="$NODE_BACKUP_DIR/telemt.toml.$ts"
-  rx "cp -a '$TELEMT_CONFIG' '$TELEMT_BACKUP'"
+  rx "install -d -m 700 '$NODE_BACKUP_DIR'; cp -a '$TELEMT_CONFIG' '$TELEMT_BACKUP'"
   HAPROXY_WAS_INSTALLED=0; dpkg-query -W -f='${Status}' haproxy 2>/dev/null | grep -q 'ok installed' && HAPROXY_WAS_INSTALLED=1 || true
   HAPROXY_WAS_ACTIVE=$(systemctl is-active haproxy 2>/dev/null || true)
   HAPROXY_BACKUP="$NODE_BACKUP_DIR/haproxy.cfg.$ts"
