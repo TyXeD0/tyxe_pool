@@ -7,6 +7,8 @@ SETTINGS=$ETC/settings.env
 STATE=/var/lib/proxy-pool
 MANIFEST=$STATE/install-manifest
 BACKUP=$STATE/backups
+CERT_STORE=/var/lib/tyxe-pool-persistent/letsencrypt
+HASH_DST=/etc/nginx/conf.d/00-tyxe-server-name-hash.conf
 
 red(){ printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green(){ printf '\033[32m%s\033[0m\n' "$*"; }
@@ -38,6 +40,16 @@ managed_install "$SCRIPT_DIR/tyxe-menu.sh" /usr/local/sbin/tyxe 0755
 
 case "$ROLE" in
   controller)
+    # install.sh may create this exact file temporarily before nginx itself is
+    # installed so the base wizard can safely add both proxy + panel hostnames.
+    # Remove only that bootstrap copy here, then reinstall it through the TYXE
+    # manifest so rollback knows the file did not exist before TYXE.
+    if [[ "${TYXE_BOOTSTRAP_HASH_CREATED:-0}" == 1 && -f $HASH_DST ]] && \
+       grep -Fqx 'server_names_hash_bucket_size 64;' "$HASH_DST"; then
+      rm -f "$HASH_DST"
+    fi
+    managed_install "$SCRIPT_DIR/nginx-server-name-hash.conf" "$HASH_DST" 0644
+
     managed_install "$SCRIPT_DIR/node-manager.sh" /usr/local/sbin/tyxe-pool-node 0755
     managed_install "$SCRIPT_DIR/awg-pair.sh" /usr/local/sbin/tyxe-awg 0755
     managed_install "$SCRIPT_DIR/dataplane-pair.sh" /usr/local/sbin/tyxe-dataplane 0755
@@ -45,6 +57,21 @@ case "$ROLE" in
     managed_install "$SCRIPT_DIR/shared443-classifier.sh" /usr/local/sbin/tyxe-shared443 0755
     managed_install "$SCRIPT_DIR/cert-manager.sh" /usr/local/sbin/tyxe-cert 0755
     managed_install "$SCRIPT_DIR/antidpi-zapret2.sh" /usr/local/sbin/tyxe-antidpi-fallback 0755
+
+    nginx -t
+
+    # If the wizard issued persistent certificates, validate their HTTP-01
+    # webroot immediately and install TYXE's own renewal timer. No prompt is
+    # shown for existing certificates. Skipped certificates remain skipped.
+    PROXY_DOMAIN=$(getenv_file "$SETTINGS" PROXY_POOL_PROXY_DOMAIN)
+    PANEL_DOMAIN=$(getenv_file "$SETTINGS" PROXY_POOL_PANEL_DOMAIN)
+    PANEL_MODE=$(getenv_file "$SETTINGS" PROXY_POOL_PANEL_MODE)
+    if [[ -n $PROXY_DOMAIN && -s "$CERT_STORE/live/$PROXY_DOMAIN/fullchain.pem" ]]; then
+      /usr/local/sbin/tyxe-cert ensure proxy
+    fi
+    if [[ $PANEL_MODE == public && -n $PANEL_DOMAIN && -s "$CERT_STORE/live/$PANEL_DOMAIN/fullchain.pem" ]]; then
+      /usr/local/sbin/tyxe-cert ensure panel
+    fi
 
     # The base installer deliberately starts controller.py first so its own
     # final check remains self-contained. Post-install then switches the same
