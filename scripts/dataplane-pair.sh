@@ -49,7 +49,8 @@ load_awg(){
   SSH_KEY=${SSH_KEY:-}
   TARGET="root@$EXIT_HOST"
   SSH=(-p "$SSH_PORT" -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o ControlMaster=auto -o ControlPersist=120 -o ControlPath=/run/tyxe-dataplane-%C)
-  [[ -n $SSH_KEY ]] && SSH+=(-i "$SSH_KEY")
+  if [[ -n $SSH_KEY ]]; then SSH+=(-i "$SSH_KEY"); fi
+  return 0
 }
 rx(){ ssh "${SSH[@]}" "$TARGET" "$@"; }
 rscript(){ ssh "${SSH[@]}" "$TARGET" 'bash -s'; }
@@ -172,7 +173,6 @@ def patch_section(lines, section, values):
                     out.append(f'{matched} = {values[matched]}'); seen.add(matched)
                 continue
         out.append(line)
-    # recompute insertion point in rebuilt list
     start2=next(i for i,l in enumerate(out) if l.strip()==header)
     end2=len(out)
     for i in range(start2+1,len(out)):
@@ -285,7 +285,8 @@ load_dp_state(){
   . "$DP_STATE"
   TARGET="root@$EXIT_HOST"
   SSH=(-p "$SSH_PORT" -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o ControlMaster=auto -o ControlPersist=120 -o ControlPath=/run/tyxe-dataplane-%C)
-  [[ -n ${SSH_KEY:-} ]] && SSH+=(-i "$SSH_KEY")
+  if [[ -n ${SSH_KEY:-} ]]; then SSH+=(-i "$SSH_KEY"); fi
+  return 0
 }
 
 status(){
