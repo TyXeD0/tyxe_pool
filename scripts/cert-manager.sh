@@ -10,6 +10,7 @@ CERT_LOGS=/var/lib/tyxe-pool-persistent/acme-logs
 RENEW_SERVICE=/etc/systemd/system/tyxe-cert-renew.service
 RENEW_TIMER=/etc/systemd/system/tyxe-cert-renew.timer
 ACME_HELPER=/etc/nginx/conf.d/tyxe-acme-http.conf
+TYXE_NGINX=$ETC/selfsteal/nginx.conf
 
 red(){ printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green(){ printf '\033[32m%s\033[0m\n' "$*"; }
@@ -73,9 +74,6 @@ for item in doc.get("Answer", []):
 public_dns_ipv4(){
   local d="$1" r ans endpoint host ip
 
-  # Query public recursive resolvers directly. Try UDP and TCP/53 because some
-  # providers/DPI block one transport but not the other. This bypasses NSS and
-  # /etc/hosts completely.
   if command -v dig >/dev/null 2>&1; then
     for r in 1.1.1.1 8.8.8.8 9.9.9.9; do
       ans=$(dig +time=2 +tries=1 +short A "$d" "@$r" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/{print; exit}' || true)
@@ -85,14 +83,11 @@ public_dns_ipv4(){
     done
   fi
 
-  # DoH by hostname is useful when ordinary DNS works, but the decisive fallback
-  # below pins the HTTPS endpoint to a known resolver IP with curl --resolve.
-  # That means the VPS does not need DNS at all to perform this lookup.
   if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
     while IFS='|' read -r host ip endpoint; do
       [[ -n $host && -n $ip && -n $endpoint ]] || continue
       ans=$(
-        curl -fsS --connect-timeout 3 --max-time 7 \
+        curl -q --noproxy '*' -fsS --connect-timeout 3 --max-time 7 \
           --resolve "$host:443:$ip" \
           -H 'accept: application/dns-json' \
           "https://$host$endpoint?name=$d&type=A" 2>/dev/null |
@@ -112,23 +107,83 @@ EOF_DOH
 
 challenge_ok(){
   local d="$1" token path got
-  install -d -m 755 "$SITE_ROOT/.well-known/acme-challenge"
+  install -d -m 755 "$SITE_ROOT" "$SITE_ROOT/.well-known" "$SITE_ROOT/.well-known/acme-challenge"
+  chmod 755 "$SITE_ROOT" "$SITE_ROOT/.well-known" "$SITE_ROOT/.well-known/acme-challenge" 2>/dev/null || true
   token="tyxe-preflight-$$-$(date +%s%N)"
   path="$SITE_ROOT/.well-known/acme-challenge/$token"
   printf '%s' "$token" > "$path"
-  got=$(curl -fsS --max-time 5 -H "Host: $d" "http://127.0.0.1/.well-known/acme-challenge/$token" 2>/dev/null || true)
+  chmod 644 "$path"
+  got=$(curl -q --noproxy '*' -fsS --max-time 5 \
+    --resolve "$d:80:127.0.0.1" \
+    "http://$d/.well-known/acme-challenge/$token" 2>/dev/null || true)
   rm -f "$path"
   [[ "$got" == "$token" ]]
 }
 
+challenge_debug(){
+  local d="$1" token path code body
+  install -d -m 755 "$SITE_ROOT/.well-known/acme-challenge"
+  token="tyxe-debug-$$-$(date +%s%N)"
+  path="$SITE_ROOT/.well-known/acme-challenge/$token"
+  body="/tmp/tyxe-acme-body.$$"
+  printf '%s' "$token" > "$path"; chmod 644 "$path"
+  code=$(curl -q --noproxy '*' -sS --max-time 5 \
+    --resolve "$d:80:127.0.0.1" \
+    -o "$body" -w '%{http_code}' \
+    "http://$d/.well-known/acme-challenge/$token" 2>/dev/null || true)
+  yellow "Локальный nginx probe: http://$d/.well-known/acme-challenge/<token> -> HTTP ${code:-000}"
+  if [[ -s $body ]]; then
+    yellow "Первые 160 байт ответа: $(head -c 160 "$body" | tr '\n\r' '  ')"
+  fi
+  rm -f "$path" "$body"
+  yellow "Активные nginx server-блоки для $d:"
+  nginx -T 2>/dev/null | grep -n -F -B2 -A10 "server_name $d" >&2 || true
+}
+
+t yxe_managed_has_acme(){
+  return 1
+}
+
+tyxe_managed_has_acme(){
+  local d="$1"
+  [[ -r $TYXE_NGINX ]] || return 1
+  grep -Fq "server_name $d" "$TYXE_NGINX" || return 1
+  grep -Fq '/.well-known/acme-challenge/' "$TYXE_NGINX" || return 1
+}
+
 ensure_acme_http_server(){
   local d="$1" backup=''
-  challenge_ok "$d" && return 0
+
+  # Remove stale helper produced by an older failed preflight before testing the
+  # canonical TYXE nginx config. The installer already creates ACME locations
+  # for proxy/panel hostnames, so a duplicate server_name can only make routing
+  # ambiguous.
+  if [[ -e $ACME_HELPER ]]; then
+    backup="${ACME_HELPER}.bak.$(date +%s%N)"
+    cp -a "$ACME_HELPER" "$backup"
+    rm -f "$ACME_HELPER"
+    if nginx -t >/dev/null 2>&1; then
+      systemctl reload nginx
+    else
+      cp -a "$backup" "$ACME_HELPER"
+      rm -f "$backup"
+    fi
+  fi
+
+  if challenge_ok "$d"; then
+    rm -f "$backup"
+    return 0
+  fi
+
+  if tyxe_managed_has_acme "$d"; then
+    red "TYXE nginx уже содержит ACME location для $d, но loopback-проверка не получает challenge-файл."
+    challenge_debug "$d"
+    [[ -n $backup && -e $backup ]] && rm -f "$backup"
+    return 1
+  fi
+
   yellow "Для $d нет рабочего ACME HTTP-01 location. TYXE добавит отдельный nginx helper только на TCP/80."
-  [[ -e $ACME_HELPER ]] && { backup="${ACME_HELPER}.bak.$(date +%s%N)"; cp -a "$ACME_HELPER" "$backup"; }
-  {
-    [[ -s $ACME_HELPER ]] && cat "$ACME_HELPER"
-    cat <<EOF
+  cat > "$ACME_HELPER" <<EOF
 server {
     listen 80;
     listen [::]:80;
@@ -140,21 +195,22 @@ server {
     location / { return 404; }
 }
 EOF
-  } > "${ACME_HELPER}.tmp"
-  mv "${ACME_HELPER}.tmp" "$ACME_HELPER"
   if ! nginx -t; then
-    [[ -n $backup ]] && cp -a "$backup" "$ACME_HELPER" || rm -f "$ACME_HELPER"
+    rm -f "$ACME_HELPER"
+    [[ -n $backup && -e $backup ]] && cp -a "$backup" "$ACME_HELPER"
     rm -f "$backup"
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
     red 'nginx -t не прошёл после добавления ACME helper.'
     return 1
   fi
   systemctl reload nginx
   if ! challenge_ok "$d"; then
-    [[ -n $backup ]] && cp -a "$backup" "$ACME_HELPER" || rm -f "$ACME_HELPER"
+    challenge_debug "$d"
+    rm -f "$ACME_HELPER"
+    [[ -n $backup && -e $backup ]] && cp -a "$backup" "$ACME_HELPER"
     rm -f "$backup"
     nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
     red "Даже после ACME helper nginx не отдаёт challenge для $d."
-    red "Проверьте: nginx -T | grep -n -A8 -B2 'server_name $d'"
     return 1
   fi
   rm -f "$backup"
