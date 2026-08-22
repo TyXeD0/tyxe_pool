@@ -14,7 +14,7 @@ red(){ printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green(){ printf '\033[32m%s\033[0m\n' "$*"; }
 yellow(){ printf '\033[33m%s\033[0m\n' "$*" >&2; }
 cyan(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
-read_tty(){ local n="$1" p="$2" v=''; read -r -p "$p" v </dev/tty || true; printf -v "$n" '%s' "$v"; }
+read_tty(){ local __name="$1" __prompt="$2" __value=''; read -r -p "$__prompt" __value </dev/tty || true; printf -v "$__name" '%s' "$__value"; }
 ask(){ local n="$1" p="$2" d="$3" v=''; read_tty v "$p [$d]: "; printf -v "$n" '%s' "${v:-$d}"; }
 yesno(){ local p="$1" v=''; read_tty v "$p [y/N]: "; [[ "$v" =~ ^[yY]$ ]]; }
 getenv(){ sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"; }
