@@ -87,6 +87,14 @@ case "$ROLE" in
     systemctl is-active --quiet proxy-pool-controller || { red 'Controller failed after runtime switch.'; exit 1; }
     ;;
   agent)
+    # A fresh bootstrap does not yet know the selected role. If the user chose
+    # EXIT, remove the temporary nginx-only helper and any now-empty dirs.
+    if [[ "${TYXE_BOOTSTRAP_HASH_CREATED:-0}" == 1 && -f $HASH_DST ]] && \
+       grep -Fqx 'server_names_hash_bucket_size 64;' "$HASH_DST"; then
+      rm -f "$HASH_DST"
+      rmdir /etc/nginx/conf.d 2>/dev/null || true
+      rmdir /etc/nginx 2>/dev/null || true
+    fi
     managed_install "$SCRIPT_DIR/telemt-manager.sh" /usr/local/sbin/tyxe-telemt 0755
     ;;
   *) red "Unknown role: ${ROLE:-empty}"; exit 1;;
