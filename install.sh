@@ -33,31 +33,40 @@ choose_language
 msg(){
   if [[ "$TYXE_POOL_LANG" == ru ]]; then
     case "$1" in
-      root) echo 'Установщик нужно запускать от root. Для curl используйте: curl ... | sudo bash -s -- --repo OWNER/tyxe_pool';;
+      root) echo 'Установщик нужно запускать от root. Для curl используйте sudo bash.';;
       repo) echo 'Введите GitHub-репозиторий в формате OWNER/tyxe_pool: ';;
-      badrepo) echo 'Неверный формат репозитория. Пример: k-real/tyxe_pool';;
+      badrepo) echo 'Неверный формат репозитория. Пример: TyXeD0/tyxe_pool';;
       missing) echo 'Не найдена обязательная команда:';;
       downloading) echo 'Загружаю публичный репозиторий';;
-      badarchive) echo 'В архиве не найден scripts/install-local.sh.';;
+      badarchive) echo 'В архиве не найден установщик TYXE Pool.';;
       start) echo 'Запускаю интерактивный установщик TYXE Pool...';;
     esac
   else
     case "$1" in
-      root) echo 'Installer must run as root. For curl use: curl ... | sudo bash -s -- --repo OWNER/tyxe_pool';;
+      root) echo 'Installer must run as root. Use sudo bash for curl installs.';;
       repo) echo 'Enter GitHub repository as OWNER/tyxe_pool: ';;
-      badrepo) echo 'Invalid repository format. Example: k-real/tyxe_pool';;
+      badrepo) echo 'Invalid repository format. Example: TyXeD0/tyxe_pool';;
       missing) echo 'Required command not found:';;
       downloading) echo 'Downloading public repository';;
-      badarchive) echo 'scripts/install-local.sh was not found in the archive.';;
+      badarchive) echo 'TYXE Pool installer was not found in the archive.';;
       start) echo 'Starting the TYXE Pool interactive installer...';;
     esac
   fi
 }
 
-# Running from a downloaded/cloned source tree: no bootstrap is needed.
+pick_installer(){
+  local root="$1"
+  if [[ -f "$root/scripts/install-v0.3.sh" ]]; then printf '%s' "$root/scripts/install-v0.3.sh"; return 0; fi
+  if [[ -f "$root/scripts/install-local.sh" ]]; then printf '%s' "$root/scripts/install-local.sh"; return 0; fi
+  return 1
+}
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
-if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/scripts/install-local.sh" ]]; then
-  exec env TYXE_POOL_LANG="$TYXE_POOL_LANG" bash "$SCRIPT_DIR/scripts/install-local.sh" "$@"
+if [[ -n "$SCRIPT_DIR" ]]; then
+  LOCAL_INSTALLER="$(pick_installer "$SCRIPT_DIR" || true)"
+  if [[ -n "$LOCAL_INSTALLER" ]]; then
+    exec env TYXE_POOL_LANG="$TYXE_POOL_LANG" bash "$LOCAL_INSTALLER"
+  fi
 fi
 
 [[ $EUID -eq 0 ]] || { red "$(msg root)"; exit 1; }
@@ -69,13 +78,13 @@ TMP="$(mktemp -d /tmp/tyxe_pool.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 ARCHIVE="$TMP/repo.tar.gz"
 printf '%s %s@%s...\n' "$(msg downloading)" "$REPO" "$REF"
-# Public repositories can use the GitHub tarball endpoint anonymously.
 curl --fail --silent --show-error --location \
   -H 'Accept: application/vnd.github+json' \
   "https://api.github.com/repos/$REPO/tarball/$REF" \
   -o "$ARCHIVE"
 tar -xzf "$ARCHIVE" -C "$TMP"
 ROOT_DIR="$(find "$TMP" -mindepth 1 -maxdepth 1 -type d | head -n1)"
-[[ -f "$ROOT_DIR/scripts/install-local.sh" ]] || { red "$(msg badarchive)"; exit 1; }
+REMOTE_INSTALLER="$(pick_installer "$ROOT_DIR" || true)"
+[[ -n "$REMOTE_INSTALLER" ]] || { red "$(msg badarchive)"; exit 1; }
 green "$(msg start)"
-exec env TYXE_POOL_LANG="$TYXE_POOL_LANG" TYXE_POOL_REPO="$REPO" TYXE_POOL_REF="$REF" bash "$ROOT_DIR/scripts/install-local.sh"
+exec env TYXE_POOL_LANG="$TYXE_POOL_LANG" TYXE_POOL_REPO="$REPO" TYXE_POOL_REF="$REF" bash "$REMOTE_INSTALLER"
