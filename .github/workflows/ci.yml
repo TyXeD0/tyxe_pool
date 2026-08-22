@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' f; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done < <(find . -type f -name '*.sh' -print0)
+      - name: Python syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile agent/*.py controller/*.py tests/*.py
+      - name: Controller regression tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v
+      - name: systemd unit syntax
+        run: |
+          set -euo pipefail
+          systemd-analyze verify systemd/*.service
+      - name: No committed private material
+        run: |
+          set -euo pipefail
+          test ! -e .env
+          if git ls-files | grep -E '\.(pem|key|p12|pfx)$'; then
+            echo 'Private key/certificate material must not be committed.' >&2
+            exit 1
+          fi

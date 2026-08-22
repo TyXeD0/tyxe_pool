@@ -1,21 +1,47 @@
 # Changelog
 
-## v0.2.1
+## Unreleased — v0.3.0 beta
 
-- Switched remote bootstrap to anonymous downloads from a public GitHub repository.
-- Added `--repo OWNER/tyxe_pool` and `--ref` bootstrap options.
-- Added administrator username/password wizard for the controller.
-- Passwords are stored as PBKDF2-SHA256 hashes, never plaintext.
-- Added localized login screen and signed HttpOnly sessions.
-- Added SameSite cookie and CSRF protection for browser mutations.
-- Added separate local API bearer token for `tyxe-pool-node`.
-- Added optional Internet-facing panel via nginx HTTPS reverse proxy while controller remains on localhost.
-- Added separate panel-domain certificate reuse/issuance.
-- Added nginx per-IP login throttling for public panel mode.
-- Development topology temporarily fixed to one ENTER + one EXIT.
+### Added
+- EXIT Telemt lifecycle integration and central status/control.
+- Private Agent migration over AmneziaWG.
+- Collision-aware `/30` AWG pair allocator and per-pair rollback.
+- Host-level HAProxy dataplane with PROXY protocol v2 to tunnel-bound Telemt.
+- `tyxe-dataplane` backup/status/rollback workflow.
+- Persistent role-aware `sudo tyxe` main menu.
+- Post-install management component deployment (`tyxe-awg`, `tyxe-dataplane`, `tyxe-mtproxyl`, `tyxe-shared443`, fallback anti-DPI helper).
+- Official upstream MTProxyL anti-DPI bridge for ENTER.
+  - downloads/updates current `Liafanx/MTProxyL` upstream when selected;
+  - requires `Reanimator` + `tools_only=true` before applying any fix;
+  - exposes current upstream Zapret2, Smart By-MEKO and wscale diagnostics;
+  - keeps TYXE ownership of HAProxy/AWG/EXIT Telemt;
+  - retains the built-in Zapret2 implementation only as an emergency fallback.
+- Transactional shared TCP/443 classifier/selfsteal for ENTER.
+  - reads the current Telemt `[censorship] tls_domain` from EXIT;
+  - routes only the configured FakeTLS SNI to Telemt through the existing AWG backend;
+  - routes the proxy hostname and unknown TLS traffic to a loopback nginx decoy;
+  - optionally routes the panel hostname to the localhost Controller over a dedicated nginx TLS backend;
+  - refuses ambiguous configurations where FakeTLS SNI matches the proxy/panel hostname;
+  - validates nginx/HAProxy before reload and has independent backup/rollback.
 
-## v0.2.0
+### Fixed during real-VPS validation
+- Interactive AWG input variable shadowing.
+- Agent systemd AWG dependency uses the explicit `.service` unit name.
+- SSH multiplexing avoids repeated password prompts within one provisioning run.
+- `set -e` false failure when an optional SSH key is empty.
+- Remote dataplane backup directory creation before copying Telemt config.
 
-- Bilingual installer/panel.
-- Persistent certificates.
-- Node Manager MVP.
+### Validated on real VPSes
+- Telemt 3.4.25 on EXIT.
+- ENTER `10.10.10.2/30` ↔ EXIT `10.10.10.1/30` AWG tunnel.
+- Agent reachable only through the tunnel path.
+- Controller keeps the EXIT node `up` across polling cycles.
+- HAProxy `0.0.0.0:443` → `10.10.10.1:443` with `send-proxy-v2`.
+- Telemt tunnel bind and `proxy_protocol=true`.
+- Real Telegram client connectivity through MTProxyL/Zapret2 over Wi-Fi and mobile networks.
+- ENTER and EXIT reboot persistence with client connectivity restored automatically.
+
+### Pending live validation
+- Shared 443 selfsteal/classifier on the real ENTER.
+- Controller stale-refresh race source fix.
+- Multi-EXIT balancing/failover.
