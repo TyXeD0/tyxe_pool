@@ -19,10 +19,11 @@ while (($#)); do
   shift
 done
 
+# Never source settings.env here. It may contain user-provided values and rollback
+# must remain safe even if a partially written settings file is malformed.
 if [[ -r /etc/proxy-pool/settings.env ]]; then
-  # shellcheck disable=SC1091
-  . /etc/proxy-pool/settings.env || true
-  LANG_CODE="${TYXE_POOL_LANG:-$LANG_CODE}"
+  detected_lang="$(sed -n 's/^TYXE_POOL_LANG=//p' /etc/proxy-pool/settings.env | tail -n1 | tr -d "'\"[:space:]")"
+  [[ "$detected_lang" =~ ^(ru|en)$ ]] && LANG_CODE="$detected_lang"
 fi
 
 trm(){
@@ -75,6 +76,10 @@ while IFS= read -r line; do
       ;;
   esac
 done < <(tac "$TMP")
+
+# Unit files may have been restored/removed above. Reload before touching identities
+# or attempting to restore previous service state.
+run systemctl daemon-reload || true
 
 # Remove OS identities only when the installer explicitly recorded that it created them.
 # USER is processed before GROUP so the group is not still referenced by that account.
