@@ -708,17 +708,17 @@ class Manager:
             p = run(["docker", "restart", container], timeout=30)
             if p.returncode != 0:
                 raise RuntimeError(f"Telemt restart failed: {p.stderr.strip()}")
-            threshold = int(self.config["manager"].get("dc_ready_threshold", 80))
-            ok, dc = wait_dc_ready(threshold)
-            if not ok:
-                return False, dc
+
+        threshold = int(self.config["manager"].get("dc_ready_threshold", 80))
+        ok, dc = wait_dc_ready(threshold)
+        if not ok:
+            return False, dc
+        if changed:
             event(
                 f"telemt_ready target={target} coverage={dc.get('coverage_pct')} "
                 f"writers={dc.get('alive_writers')}/{dc.get('required_writers')}"
             )
-            return True, dc
-
-        return True, dc_status()
+        return True, dc
 
     def switch(self, target: str, reason: str) -> bool:
         if target == self.active:
