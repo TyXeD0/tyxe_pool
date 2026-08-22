@@ -9,7 +9,7 @@ CERT_WORK=/var/lib/tyxe-pool-persistent/acme-work
 CERT_LOGS=/var/lib/tyxe-pool-persistent/acme-logs
 RENEW_SERVICE=/etc/systemd/system/tyxe-cert-renew.service
 RENEW_TIMER=/etc/systemd/system/tyxe-cert-renew.timer
-ACME_HELPER=/etc/nginx/conf.d/tyxe-acme-http.conf
+DEPLOY_HOOK=/usr/local/sbin/tyxe-cert-deploy-hook
 
 red(){ printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green(){ printf '\033[32m%s\033[0m\n' "$*"; }
@@ -128,16 +128,15 @@ check_public_dns(){
   if [[ -n $resolved ]]; then
     if [[ -n $pub && $resolved != "$pub" ]]; then
       red "Публичный DNS $d -> $resolved, а IPv4 ENTER -> $pub"
-      red 'Для текущего DNS-only HTTP-01 A-запись должна указывать на ENTER.'
+      red 'Для HTTP-01 A-запись должна указывать на ENTER.'
       return 1
     fi
     green "Публичный DNS: $d -> $resolved"
     return 0
   fi
   yellow "Не удалось независимо проверить публичную A-запись $d с этого VPS."
-  yellow 'Проверка /etc/hosts намеренно не используется; окончательную проверку выполнит Let’s Encrypt.'
+  yellow 'Окончательную внешнюю проверку выполнит Let’s Encrypt.'
   [[ -n $pub ]] && yellow "Ожидаемый публичный IPv4 ENTER: $pub"
-  return 0
 }
 
 challenge_ok(){
@@ -157,22 +156,6 @@ challenge_ok(){
   [[ "$got" == "$token" ]]
 }
 
-run_with_nginx_stopped(){
-  local was_active=0 rc=0
-  if systemctl is-active --quiet nginx; then
-    was_active=1
-    systemctl stop nginx
-  fi
-  if ss -ltnH 'sport = :80' 2>/dev/null | grep -q .; then
-    red 'TCP/80 остаётся занят после остановки nginx; standalone ACME запускать небезопасно.'
-    (( was_active )) && systemctl start nginx || true
-    return 1
-  fi
-  if "$@"; then rc=0; else rc=$?; fi
-  (( was_active )) && systemctl start nginx || true
-  return "$rc"
-}
-
 certbot_common(){
   printf '%s\n' \
     --agree-tos --non-interactive --no-eff-email \
@@ -187,34 +170,32 @@ issue_webroot(){
   certbot "${args[@]}"
 }
 
-issue_standalone(){
-  local d="$1" email="$2" args
-  mapfile -t args < <(certbot_common)
-  args=(certbot certonly --standalone --preferred-challenges http --http-01-port 80 \
-    -d "$d" --cert-name "$d" "${args[@]}")
-  [[ -n $email ]] && args+=(--email "$email") || args+=(--register-unsafely-without-email)
-  run_with_nginx_stopped "${args[@]}"
-}
-
 install_renew_timer(){
   ensure_dirs
-  cat > "$RENEW_SERVICE" <<'EOF'
+  cat > "$DEPLOY_HOOK" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+/usr/sbin/nginx -t
+/bin/systemctl reload nginx
+EOF
+  chmod 0755 "$DEPLOY_HOOK"
+  cat > "$RENEW_SERVICE" <<EOF
 [Unit]
-Description=TYXE Let's Encrypt renewal
-After=network-online.target
-Wants=network-online.target
+Description=TYXE Let's Encrypt webroot renewal
+After=network-online.target nginx.service
+Wants=network-online.target nginx.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/tyxe-cert renew-auto
+ExecStart=/usr/bin/certbot renew --no-random-sleep-on-renew --config-dir $CERT_STORE --work-dir $CERT_WORK --logs-dir $CERT_LOGS --quiet --deploy-hook $DEPLOY_HOOK
 EOF
   cat > "$RENEW_TIMER" <<'EOF'
 [Unit]
-Description=Daily TYXE Let's Encrypt renewal check
+Description=TYXE automatic TLS renewal
 
 [Timer]
-OnCalendar=daily
-RandomizedDelaySec=4h
+OnCalendar=*-*-* 03,15:00:00
+RandomizedDelaySec=30m
 Persistent=true
 
 [Install]
@@ -224,42 +205,16 @@ EOF
   systemctl enable --now tyxe-cert-renew.timer >/dev/null
 }
 
-reconfigure_standalone(){
-  local d="$1" args
-  command -v certbot >/dev/null 2>&1 || return 1
-  certbot help reconfigure >/dev/null 2>&1 || { yellow 'Этот Certbot не поддерживает reconfigure; оставляю текущий authenticator.'; return 1; }
-  cyan "ACME migration: $d -> standalone"
-  args=(certbot reconfigure --cert-name "$d" --authenticator standalone \
-    --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS" --non-interactive)
-  if run_with_nginx_stopped "${args[@]}"; then
-    green "Renewal authenticator для $d переведён на standalone."
-    return 0
-  fi
-  yellow "Не удалось перевести $d на standalone; существующий сертификат не изменён."
-  return 1
-}
-
 renew_one(){
-  local d="$1" dry="${2:-0}" auth args rc=0
+  local d="$1" dry="${2:-0}" auth args
   cert_dir "$d" >/dev/null 2>&1 || return 0
-  renewal_conf "$d" >/dev/null 2>&1 || { yellow "Нет renewal config для $d; пропускаю."; return 0; }
+  renewal_conf "$d" >/dev/null 2>&1 || { red "Нет renewal config для $d."; return 1; }
   auth=$(authenticator_for "$d")
-
-  if [[ $auth != standalone ]] && ! challenge_ok "$d"; then
-    yellow "Webroot-проверка для $d не проходит; пробую безопасно перевести renewal на standalone."
-    reconfigure_standalone "$d" || true
-    auth=$(authenticator_for "$d")
-  fi
-
-  args=(certbot renew --cert-name "$d" --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS")
+  [[ $auth == webroot ]] || { red "$d использует authenticator=$auth; TYXE v0.3 требует webroot."; return 1; }
+  challenge_ok "$d" || { red "Webroot-проверка для $d не проходит. Renewal остановлен без изменения сертификата."; return 1; }
+  args=(certbot renew --cert-name "$d" --no-random-sleep-on-renew --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS")
   (( dry )) && args+=(--dry-run) || args+=(--quiet)
-
-  if [[ $auth == standalone ]]; then
-    if run_with_nginx_stopped "${args[@]}"; then rc=0; else rc=$?; fi
-  else
-    if "${args[@]}"; then rc=0; else rc=$?; fi
-  fi
-  return "$rc"
+  "${args[@]}"
 }
 
 renew_all(){
@@ -270,8 +225,10 @@ renew_all(){
     cyan "Renewal: $d ($(authenticator_for "$d"))"
     renew_one "$d" "$dry" || failed=1
   done
-  systemctl is-active --quiet nginx && systemctl reload nginx || true
   (( failed == 0 )) || { red 'Одна или несколько ACME renewal-проверок завершились ошибкой.'; return 1; }
+  if (( dry == 0 )); then
+    nginx -t && systemctl reload nginx
+  fi
 }
 
 ensure_cert(){
@@ -281,39 +238,33 @@ ensure_cert(){
   ensure_dirs
   check_public_dns "$DOMAIN" || return 1
 
-  local existing email='' mode
+  local existing email=''
   if existing=$(cert_dir "$DOMAIN"); then
     green "Сертификат уже существует: $existing"
     openssl x509 -in "$existing/fullchain.pem" -noout -subject -issuer -enddate 2>/dev/null || true
     green "Renewal authenticator: $(authenticator_for "$DOMAIN")"
+    challenge_ok "$DOMAIN" || { red 'HTTP-01 webroot не работает. Исправьте nginx/TCP 80 перед renewal.'; return 1; }
     install_renew_timer
     return 0
   fi
 
-  if challenge_ok "$DOMAIN"; then
-    mode=webroot
-    green 'Локальный HTTP-01 webroot: OK'
-  else
-    mode=standalone
-    yellow 'nginx webroot не прошёл локальную HTTP-01 проверку.'
-    yellow 'TYXE использует fallback standalone: nginx будет остановлен только на время Certbot.'
-  fi
+  challenge_ok "$DOMAIN" || {
+    red "HTTP-01 webroot для $DOMAIN не работает."
+    red 'TYXE не использует standalone: nginx должен продолжать работать во время выпуска/продления.'
+    return 1
+  }
 
-  yellow "Будет выпущен Let's Encrypt сертификат для $DOMAIN ($mode) и сохранён вне rollback TYXE."
+  green 'Локальный HTTP-01 webroot: OK'
+  yellow "Будет выпущен Let's Encrypt сертификат для $DOMAIN через webroot и сохранён вне rollback TYXE."
   yesno 'Выпустить сертификат?' || return 0
   read -r -p "Email Let's Encrypt (пусто = без email): " email </dev/tty || true
 
-  if [[ $mode == webroot ]]; then
-    if ! issue_webroot "$DOMAIN" "$email"; then
-      yellow 'Webroot issuance не удался. Повторный запрос автоматически НЕ выполняю, чтобы не расходовать ACME rate limits.'
-      yellow "После устранения причины повторите: sudo tyxe-cert ensure ${1:-proxy}"
-      return 1
-    fi
-  else
-    issue_standalone "$DOMAIN" "$email"
+  if ! issue_webroot "$DOMAIN" "$email"; then
+    yellow 'Webroot issuance не удался. Автоматический повтор не выполняется, чтобы не расходовать ACME rate limits.'
+    return 1
   fi
 
-  existing=$(cert_dir "$DOMAIN") || { red 'Certbot завершился, но сертификат не найден в ожидаемом хранилище.'; return 1; }
+  existing=$(cert_dir "$DOMAIN") || { red 'Certbot завершился, но сертификат не найден.'; return 1; }
   install_renew_timer
   green "Готово: $existing"
   green "Renewal authenticator: $(authenticator_for "$DOMAIN")"
@@ -330,7 +281,7 @@ status(){
       printf '%s\n' "$p"
       openssl x509 -in "$p/fullchain.pem" -noout -enddate 2>/dev/null || true
       printf '  authenticator: %s\n' "$(authenticator_for "$d")"
-      if challenge_ok "$d"; then echo '  webroot probe: OK'; else echo '  webroot probe: unavailable (standalone fallback available)'; fi
+      if challenge_ok "$d"; then echo '  webroot probe: OK'; else echo '  webroot probe: FAILED'; fi
     else
       echo 'missing'
     fi
@@ -338,8 +289,6 @@ status(){
   printf '\nRenew timer: '
   systemctl is-enabled tyxe-cert-renew.timer 2>/dev/null || true
   systemctl list-timers tyxe-cert-renew.timer --no-pager 2>/dev/null || true
-  printf 'Legacy ACME helper: '
-  [[ -s $ACME_HELPER ]] && echo "$ACME_HELPER" || echo 'not present'
 }
 
 renew_test(){
