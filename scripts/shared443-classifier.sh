@@ -21,11 +21,16 @@ getenv_file(){ sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n1 | sed -e 's/^"//' 
 
 [[ $EUID -eq 0 ]] || { red 'Запустите через sudo/root.'; exit 1; }
 
-require_enter(){
+require_controller(){
   [[ -r $SETTINGS ]] || { red 'TYXE settings не найдены.'; return 1; }
-  [[ "$(getenv_file "$SETTINGS" PROXY_POOL_ROLE)" == controller ]] || { red 'Shared-443 classifier ставится только на ENTER/controller.'; return 1; }
+  [[ "$(getenv_file "$SETTINGS" PROXY_POOL_ROLE)" == controller ]] || { red 'Shared-443 classifier доступен только на ENTER/controller.'; return 1; }
+}
+
+require_enter(){
+  require_controller || return 1
   systemctl is-active --quiet haproxy || { red 'HAProxy не active. Сначала должен работать dataplane.'; return 1; }
   systemctl is-active --quiet nginx || { red 'nginx не active.'; return 1; }
+  haproxy -c -f "$HAPROXY_CONFIG" >/dev/null || { red 'Текущий HAProxy config невалиден. Сначала выполните rollback/восстановление dataplane.'; return 1; }
 }
 
 choose_dp_state(){
@@ -51,7 +56,6 @@ load_dp(){
   TARGET="root@$EXIT_HOST"
   SSH=(-p "$SSH_PORT" -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o ControlMaster=auto -o ControlPersist=120 -o ControlPath=/run/tyxe-shared443-%C)
   if [[ -n $SSH_KEY ]]; then SSH+=(-i "$SSH_KEY"); fi
-  return 0
 }
 rx(){ ssh "${SSH[@]}" "$TARGET" "$@"; }
 
@@ -101,6 +105,15 @@ port_free_or_nginx(){
   grep -q nginx <<<"$holder"
 }
 
+wait_controller(){
+  local p="$1" i
+  for i in {1..20}; do
+    curl --noproxy '*' -fsS --max-time 1 "http://127.0.0.1:$p/healthz" >/dev/null 2>&1 && return 0
+    sleep 0.25
+  done
+  return 1
+}
+
 preflight(){
   cyan 'Preflight shared TCP/443'
   [[ ! -e $STATE_FILE ]] || { red 'Shared-443 state уже существует. Используйте status/rollback.'; return 1; }
@@ -110,6 +123,7 @@ preflight(){
 
   PROXY_DOMAIN=$(getenv_file "$SETTINGS" PROXY_POOL_PROXY_DOMAIN)
   PANEL_DOMAIN=$(getenv_file "$SETTINGS" PROXY_POOL_PANEL_DOMAIN)
+  PANEL_MODE=$(getenv_file "$SETTINGS" PROXY_POOL_PANEL_MODE)
   PANEL_PORT=$(getenv_file "$SETTINGS" PROXY_POOL_PORT); PANEL_PORT=${PANEL_PORT:-9101}
   [[ -n $PROXY_DOMAIN ]] || { red 'PROXY_POOL_PROXY_DOMAIN пуст.'; return 1; }
   read_fake_sni
@@ -118,7 +132,12 @@ preflight(){
 
   PROXY_CERT=$(cert_dir "$PROXY_DOMAIN") || { red "Нет валидных файлов сертификата для $PROXY_DOMAIN. Shared HTTPS пока включать нельзя."; return 1; }
   PANEL_ENABLED=0; PANEL_CERT=''
-  if [[ -n $PANEL_DOMAIN ]] && PANEL_CERT=$(cert_dir "$PANEL_DOMAIN"); then PANEL_ENABLED=1; else yellow 'Отдельный HTTPS panel backend не включён: panel domain/certificate отсутствует.'; fi
+  if [[ "$PANEL_MODE" == public && -n $PANEL_DOMAIN ]] && PANEL_CERT=$(cert_dir "$PANEL_DOMAIN"); then
+    PANEL_ENABLED=1
+    wait_controller "$PANEL_PORT" || { red "Controller не отвечает на 127.0.0.1:$PANEL_PORT/healthz"; return 1; }
+  elif [[ "$PANEL_MODE" == public ]]; then
+    yellow 'Отдельный HTTPS panel backend не включён: panel certificate отсутствует.'
+  fi
 
   port_free_or_nginx "$DECOY_PORT" || { red "TCP/$DECOY_PORT занят не nginx."; return 1; }
   if (( PANEL_ENABLED )); then port_free_or_nginx "$PANEL_TLS_PORT" || { red "TCP/$PANEL_TLS_PORT занят не nginx."; return 1; }; fi
@@ -127,24 +146,6 @@ preflight(){
   green "HTTPS site SNI:       $PROXY_DOMAIN -> nginx 127.0.0.1:$DECOY_PORT"
   if (( PANEL_ENABLED )); then green "HTTPS panel SNI:      $PANEL_DOMAIN -> nginx 127.0.0.1:$PANEL_TLS_PORT -> Controller :$PANEL_PORT"; fi
   yellow 'Любой другой TLS SNI и трафик без распознанного FakeTLS SNI по умолчанию уйдёт на сайт-заглушку, а не в Telemt.'
-}
-
-backup_all(){
-  local ts; ts=$(date +%s)
-  BACKUP_DIR="$BACKUP_ROOT/$ts"
-  install -d -m 700 "$BACKUP_DIR"
-  HAPROXY_BACKUP="$BACKUP_DIR/haproxy.cfg"; cp -a "$HAPROXY_CONFIG" "$HAPROXY_BACKUP"
-  NGINX_BACKUP=''
-  if [[ -e $NGINX_CONFIG || -L $NGINX_CONFIG ]]; then NGINX_BACKUP="$BACKUP_DIR/tyxe-shared443.conf"; cp -a "$NGINX_CONFIG" "$NGINX_BACKUP"; fi
-  INDEX_CREATED=0
-  if [[ ! -e $SITE_ROOT/index.html ]]; then
-    install -d -m 755 "$SITE_ROOT"
-    cat > "$SITE_ROOT/index.html" <<'HTML'
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Welcome</title></head><body><main><h1>Welcome</h1><p>This website is currently under construction.</p></main></body></html>
-HTML
-    INDEX_CREATED=1
-  fi
-  save_state
 }
 
 save_state(){
@@ -165,9 +166,33 @@ save_state(){
   chmod 600 "$STATE_FILE"
 }
 
+backup_all(){
+  local ts; ts=$(date +%s%N)
+  BACKUP_DIR="$BACKUP_ROOT/$ts"
+  install -d -m 700 "$BACKUP_DIR"
+  HAPROXY_BACKUP="$BACKUP_DIR/haproxy.cfg"
+  cp -a "$HAPROXY_CONFIG" "$HAPROXY_BACKUP"
+  NGINX_BACKUP=''
+  if [[ -e $NGINX_CONFIG || -L $NGINX_CONFIG ]]; then
+    NGINX_BACKUP="$BACKUP_DIR/tyxe-shared443.conf"
+    cp -a "$NGINX_CONFIG" "$NGINX_BACKUP"
+  fi
+  INDEX_CREATED=0
+  if [[ ! -e $SITE_ROOT/index.html ]]; then
+    install -d -m 755 "$SITE_ROOT"
+    cat > "$SITE_ROOT/index.html" <<'HTML'
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Welcome</title></head><body><main><h1>Welcome</h1><p>This website is currently under construction.</p></main></body></html>
+HTML
+    INDEX_CREATED=1
+  fi
+  save_state
+}
+
 write_nginx(){
   cyan 'nginx loopback TLS backends'
-  cat > "$NGINX_CONFIG" <<EOF
+  local tmp
+  tmp=$(mktemp /etc/nginx/conf.d/.tyxe-shared443.XXXXXX)
+  cat > "$tmp" <<EOF
 server {
     listen 127.0.0.1:$DECOY_PORT ssl;
     server_name $PROXY_DOMAIN;
@@ -182,7 +207,7 @@ server {
 }
 EOF
   if (( PANEL_ENABLED )); then
-    cat >> "$NGINX_CONFIG" <<EOF
+    cat >> "$tmp" <<EOF
 
 server {
     listen 127.0.0.1:$PANEL_TLS_PORT ssl;
@@ -202,66 +227,151 @@ server {
 }
 EOF
   fi
-  nginx -t
-  systemctl reload nginx
-  ss -ltnpH "sport = :$DECOY_PORT" | grep -q nginx
-  if (( PANEL_ENABLED )); then ss -ltnpH "sport = :$PANEL_TLS_PORT" | grep -q nginx; fi
+  mv -f "$tmp" "$NGINX_CONFIG"
+  if ! nginx -t; then return 1; fi
+  systemctl reload nginx || return 1
+  sleep 0.5
+  ss -ltnpH "sport = :$DECOY_PORT" | grep -q nginx || return 1
+  if (( PANEL_ENABLED )); then ss -ltnpH "sport = :$PANEL_TLS_PORT" | grep -q nginx || return 1; fi
+}
+
+build_haproxy_candidate(){
+  local out="$1"
+  python3 - "$HAPROXY_CONFIG" "$out" "$FAKE_SNI" "$PROXY_DOMAIN" "$PANEL_DOMAIN" "$PANEL_ENABLED" "$DECOY_PORT" "$PANEL_TLS_PORT" <<'PY'
+from pathlib import Path
+import sys
+
+src=Path(sys.argv[1]); dst=Path(sys.argv[2])
+fake,proxy,panel=sys.argv[3:6]
+panel_on=sys.argv[6]=='1'
+decoy=sys.argv[7]; panel_port=sys.argv[8]
+lines=src.read_text().splitlines()
+
+section_words={'global','defaults','frontend','backend','listen','peers','resolvers','userlist','cache','program','mailers','ring'}
+def is_section_header(line):
+    if not line or line[0].isspace():
+        return False
+    return line.split(None,1)[0] in section_words
+
+start=None
+for i,line in enumerate(lines):
+    if line.strip()=='frontend tyxe_mtproto_443':
+        start=i
+        break
+if start is None:
+    raise SystemExit('TYXE frontend not found')
+
+end=len(lines)
+for i in range(start+1,len(lines)):
+    if is_section_header(lines[i]):
+        end=i
+        break
+
+if not any(line.strip()=='backend tyxe_telemt' for line in lines):
+    raise SystemExit('TYXE telemt backend missing before patch')
+if any(line.strip() in ('backend tyxe_https_decoy','backend tyxe_https_panel') for line in lines):
+    raise SystemExit('classifier backend already exists')
+
+front=[
+    'frontend tyxe_mtproto_443',
+    '    bind 0.0.0.0:443',
+    '    maxconn 8000',
+    '    option tcp-smart-accept',
+    '    tcp-request inspect-delay 3s',
+    '    tcp-request content accept if { req_ssl_hello_type 1 }',
+    f'    acl tyxe_mtproto_sni req.ssl_sni -i {fake}',
+    f'    acl tyxe_proxy_sni req.ssl_sni -i {proxy}',
+]
+if panel_on:
+    front.append(f'    acl tyxe_panel_sni req.ssl_sni -i {panel}')
+front.append('    use_backend tyxe_telemt if tyxe_mtproto_sni')
+if panel_on:
+    front.append('    use_backend tyxe_https_panel if tyxe_panel_sni')
+front += [
+    '    use_backend tyxe_https_decoy if tyxe_proxy_sni',
+    '    default_backend tyxe_https_decoy',
+    '',
+]
+
+out=lines[:start] + front + lines[end:]
+while out and not out[-1].strip():
+    out.pop()
+out += [
+    '',
+    'backend tyxe_https_decoy',
+    '    option tcp-smart-connect',
+    f'    server tyxe_decoy 127.0.0.1:{decoy} check inter 5s rise 2 fall 3',
+]
+if panel_on:
+    out += [
+        '',
+        'backend tyxe_https_panel',
+        '    option tcp-smart-connect',
+        f'    server tyxe_panel 127.0.0.1:{panel_port} check inter 5s rise 2 fall 3',
+    ]
+
+if not any(line.strip()=='backend tyxe_telemt' for line in out):
+    raise SystemExit('safety check: patch removed tyxe_telemt backend')
+
+dst.write_text('\n'.join(out)+'\n')
+PY
 }
 
 patch_haproxy(){
   cyan 'HAProxy SNI classifier'
-  python3 - "$HAPROXY_CONFIG" "$FAKE_SNI" "$PROXY_DOMAIN" "$PANEL_DOMAIN" "$PANEL_ENABLED" "$DECOY_PORT" "$PANEL_TLS_PORT" <<'PY'
-from pathlib import Path
-import re,sys
-p=Path(sys.argv[1]); fake,proxy,panel=sys.argv[2:5]; panel_on=sys.argv[5]=='1'; decoy=sys.argv[6]; panel_port=sys.argv[7]
-lines=p.read_text().splitlines()
-section=re.compile(r'^(global|defaults|frontend|backend|listen|peers|resolvers|userlist|cache|program|mailers|ring)\\b')
-start=None
-for i,l in enumerate(lines):
-    if l.strip()=='frontend tyxe_mtproto_443': start=i; break
-if start is None: raise SystemExit('TYXE frontend not found')
-end=len(lines)
-for i in range(start+1,len(lines)):
-    if section.match(lines[i]) and not lines[i].startswith((' ','\\t')):
-        end=i; break
-if any(l.strip()=='backend tyxe_https_decoy' for l in lines): raise SystemExit('classifier backend already exists')
-front=[
-'frontend tyxe_mtproto_443',
-'    bind 0.0.0.0:443',
-'    maxconn 8000',
-'    option tcp-smart-accept',
-'    tcp-request inspect-delay 3s',
-'    tcp-request content accept if { req_ssl_hello_type 1 }',
-f'    acl tyxe_mtproto_sni req.ssl_sni -i {fake}',
-f'    acl tyxe_proxy_sni req.ssl_sni -i {proxy}',
-]
-if panel_on: front.append(f'    acl tyxe_panel_sni req.ssl_sni -i {panel}')
-front.append('    use_backend tyxe_telemt if tyxe_mtproto_sni')
-if panel_on: front.append('    use_backend tyxe_https_panel if tyxe_panel_sni')
-front += ['    use_backend tyxe_https_decoy if tyxe_proxy_sni','    default_backend tyxe_https_decoy','']
-lines[start:end]=front
-while lines and not lines[-1].strip(): lines.pop()
-lines += ['', 'backend tyxe_https_decoy', '    option tcp-smart-connect', f'    server tyxe_decoy 127.0.0.1:{decoy} check inter 5s rise 2 fall 3']
-if panel_on:
-    lines += ['', 'backend tyxe_https_panel', '    option tcp-smart-connect', f'    server tyxe_panel 127.0.0.1:{panel_port} check inter 5s rise 2 fall 3']
-p.write_text('\n'.join(lines)+'\n')
-PY
-  haproxy -c -f "$HAPROXY_CONFIG"
-  systemctl reload haproxy
+  local tmp
+  tmp=$(mktemp /etc/haproxy/.haproxy.cfg.tyxe.XXXXXX)
+  if ! build_haproxy_candidate "$tmp"; then rm -f "$tmp"; return 1; fi
+  if ! haproxy -c -f "$tmp"; then
+    red 'Временный HAProxy config не прошёл проверку; рабочий config не изменён.'
+    rm -f "$tmp"
+    return 1
+  fi
+  install -m 644 "$tmp" "$HAPROXY_CONFIG"
+  rm -f "$tmp"
+  if ! systemctl reload haproxy; then return 1; fi
   sleep 1
-  systemctl is-active --quiet haproxy
+  systemctl is-active --quiet haproxy || return 1
+}
+
+restore_failed_setup(){
+  red 'Ошибка setup: автоматически восстанавливаю предыдущую конфигурацию.'
+  [[ -n ${HAPROXY_BACKUP:-} && -s ${HAPROXY_BACKUP:-} ]] && cp -a "$HAPROXY_BACKUP" "$HAPROXY_CONFIG"
+  if [[ -n ${NGINX_BACKUP:-} && -s ${NGINX_BACKUP:-} ]]; then
+    cp -a "$NGINX_BACKUP" "$NGINX_CONFIG"
+  else
+    rm -f "$NGINX_CONFIG"
+  fi
+  [[ ${INDEX_CREATED:-0} == 1 ]] && rm -f "$SITE_ROOT/index.html" || true
+
+  local ok=1
+  nginx -t || ok=0
+  haproxy -c -f "$HAPROXY_CONFIG" || ok=0
+  if (( ok )); then
+    systemctl reload nginx || systemctl restart nginx || true
+    systemctl reload haproxy || systemctl restart haproxy || true
+  fi
+  rm -f "$STATE_FILE"
+  if (( ok )) && systemctl is-active --quiet haproxy && systemctl is-active --quiet nginx; then
+    green 'Автооткат завершён: предыдущие nginx/HAProxy восстановлены.'
+    return 0
+  fi
+  red 'Автооткат не смог полностью подтвердить восстановление. Проверьте systemctl status haproxy nginx.'
+  return 1
 }
 
 postcheck(){
   cyan 'Проверка'
-  haproxy -c -f "$HAPROXY_CONFIG"
-  nginx -t
+  haproxy -c -f "$HAPROXY_CONFIG" || return 1
+  nginx -t || return 1
+  grep -q '^backend tyxe_telemt$' "$HAPROXY_CONFIG" || { red 'Safety check: backend tyxe_telemt отсутствует.'; return 1; }
+
   local code
-  code=$(curl --noproxy '*' -sS --resolve "$PROXY_DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$PROXY_DOMAIN/" || true)
+  code=$(curl --noproxy '*' -sS --max-time 8 --resolve "$PROXY_DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$PROXY_DOMAIN/" || true)
   [[ $code =~ ^(200|301|302|304)$ ]] || { red "HTTPS decoy check failed: HTTP ${code:-none}"; return 1; }
   green "https://$PROXY_DOMAIN/ -> HTTP $code"
   if (( PANEL_ENABLED )); then
-    code=$(curl --noproxy '*' -sS --resolve "$PANEL_DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$PANEL_DOMAIN/" || true)
+    code=$(curl --noproxy '*' -sS --max-time 8 --resolve "$PANEL_DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$PANEL_DOMAIN/" || true)
     [[ $code =~ ^(200|301|302|303|401|403)$ ]] || { red "HTTPS panel check failed: HTTP ${code:-none}"; return 1; }
     green "https://$PANEL_DOMAIN/ -> HTTP $code"
   fi
@@ -270,18 +380,19 @@ postcheck(){
 }
 
 setup(){
-  require_enter
+  require_enter || return 1
   load_dp "${1:-}" || return 1
-  preflight
+  preflight || return 1
   yesno 'Включить shared-443 classifier/selfsteal?' || return 0
   cyan 'Backup'; backup_all
-  if ! write_nginx; then red 'nginx setup failed. Запустите: sudo tyxe-shared443 rollback'; return 1; fi
-  if ! patch_haproxy; then red 'HAProxy classifier failed. Запустите: sudo tyxe-shared443 rollback'; return 1; fi
-  postcheck || { red 'Postcheck failed. Запустите: sudo tyxe-shared443 rollback'; return 1; }
+  if ! write_nginx; then restore_failed_setup; return 1; fi
+  if ! patch_haproxy; then restore_failed_setup; return 1; fi
+  if ! postcheck; then restore_failed_setup; return 1; fi
+  green 'Shared-443 classifier установлен успешно.'
 }
 
 status(){
-  require_enter
+  require_controller || return 1
   cyan 'Shared TCP/443 status'
   if [[ ! -r $STATE_FILE ]]; then yellow 'Classifier state не найден.'; return 0; fi
   # shellcheck disable=SC1090
@@ -292,10 +403,11 @@ status(){
   printf 'nginx:   '; systemctl is-active nginx || true
   printf '\nListeners:\n'; ss -ltnp | grep -E ":(443|$DECOY_PORT|$PANEL_TLS_PORT)\\b" || true
   printf '\nClassifier ACLs:\n'; grep -E 'tyxe_(mtproto|proxy|panel)_sni|default_backend tyxe_https_decoy' "$HAPROXY_CONFIG" || true
+  printf '\nBackends:\n'; grep -E '^backend tyxe_(telemt|https_decoy|https_panel)$' "$HAPROXY_CONFIG" || true
 }
 
 rollback(){
-  require_enter
+  require_controller || return 1
   [[ -r $STATE_FILE ]] || { yellow 'Classifier state не найден.'; return 0; }
   # shellcheck disable=SC1090
   . "$STATE_FILE"
@@ -304,10 +416,10 @@ rollback(){
   cp -a "$HAPROXY_BACKUP" "$HAPROXY_CONFIG"
   if [[ -n ${NGINX_BACKUP:-} && -s $NGINX_BACKUP ]]; then cp -a "$NGINX_BACKUP" "$NGINX_CONFIG"; else rm -f "$NGINX_CONFIG"; fi
   [[ ${INDEX_CREATED:-0} == 1 ]] && rm -f "$SITE_ROOT/index.html" || true
-  nginx -t
-  haproxy -c -f "$HAPROXY_CONFIG"
-  systemctl reload nginx
-  systemctl reload haproxy
+  nginx -t || return 1
+  haproxy -c -f "$HAPROXY_CONFIG" || return 1
+  systemctl reload nginx || systemctl restart nginx
+  systemctl reload haproxy || systemctl restart haproxy
   rm -f "$STATE_FILE"
   green 'Shared-443 classifier откатан. Dataplane/AWG/Telemt/MTProxyL не изменены.'
 }
