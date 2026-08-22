@@ -124,6 +124,8 @@ challenge_debug(){
   path="$SITE_ROOT/.well-known/acme-challenge/$token"
   body="/tmp/tyxe-acme-body.$$"
   printf '%s' "$token" > "$path"; chmod 644 "$path"
+  yellow "Файл проверки на диске: $path"
+  ls -l "$path" >&2 || true
   code=$(curl -q --noproxy '*' -sS --max-time 5 \
     --resolve "$d:80:127.0.0.1" \
     -o "$body" -w '%{http_code}' \
@@ -134,7 +136,7 @@ challenge_debug(){
   fi
   rm -f "$path" "$body"
   yellow "Активные nginx server-блоки для $d:"
-  nginx -T 2>/dev/null | grep -n -F -B2 -A10 "server_name $d" >&2 || true
+  nginx -T 2>/dev/null | grep -n -F -B2 -A12 "server_name $d" >&2 || true
 }
 
 tyxe_managed_has_acme(){
@@ -173,9 +175,10 @@ server {
     listen 80;
     listen [::]:80;
     server_name $d;
-    root $SITE_ROOT;
     location ^~ /.well-known/acme-challenge/ {
-        try_files \$uri =404;
+        alias $SITE_ROOT/.well-known/acme-challenge/;
+        default_type text/plain;
+        add_header Cache-Control "no-store" always;
     }
     location / { return 404; }
 }
