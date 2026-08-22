@@ -11,6 +11,9 @@ fi
 LANG_CODE="${TYXE_POOL_LANG:-en}"
 PORT="${PROXY_POOL_PORT:-9101}"
 API="http://127.0.0.1:$PORT/api/nodes"
+LOCAL_API_TOKEN="${PROXY_POOL_LOCAL_API_TOKEN:-}"
+AUTH_ARGS=()
+[[ -n "$LOCAL_API_TOKEN" ]] && AUTH_ARGS=(-H "Authorization: Bearer $LOCAL_API_TOKEN")
 
 read_tty(){ local __var="$1" __prompt="$2" __silent="${3:-0}" value=''; if [[ "$__silent" == 1 ]]; then read -r -s -p "$__prompt" value </dev/tty || true; printf '\n' >/dev/tty; else read -r -p "$__prompt" value </dev/tty || true; fi; printf -v "$__var" '%s' "$value"; }
 msg(){
@@ -33,7 +36,7 @@ msg(){
 }
 
 list_nodes(){
-  curl -fsS "$API" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("ID           NAME             ADDRESS                 STATUS"); [print(f"{n.get(chr(105)+chr(100),chr(45)):<12} {n.get(chr(110)+chr(97)+chr(109)+chr(101),chr(45)):<16} {n.get(chr(97)+chr(100)+chr(100)+chr(114)+chr(101)+chr(115)+chr(115),chr(45))}:{n.get(chr(97)+chr(103)+chr(101)+chr(110)+chr(116)+chr(95)+chr(112)+chr(111)+chr(114)+chr(116),9100):<7} {n.get(chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115),chr(45))}") for n in d.get(chr(110)+chr(111)+chr(100)+chr(101)+chr(115),[])]' || { echo "$(msg bad)"; return 1; }
+  curl -fsS "${AUTH_ARGS[@]}" "$API" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("ID           NAME             ADDRESS                 STATUS"); [print(f"{n.get(chr(105)+chr(100),chr(45)):<12} {n.get(chr(110)+chr(97)+chr(109)+chr(101),chr(45)):<16} {n.get(chr(97)+chr(100)+chr(100)+chr(114)+chr(101)+chr(115)+chr(115),chr(45))}:{n.get(chr(97)+chr(103)+chr(101)+chr(110)+chr(116)+chr(95)+chr(112)+chr(111)+chr(114)+chr(116),9100):<7} {n.get(chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115),chr(45))}") for n in d.get(chr(110)+chr(111)+chr(100)+chr(101)+chr(115),[])]' || { echo "$(msg bad)"; return 1; }
 }
 add_node(){
   local name='' addr='' port='9100' token=''
@@ -46,13 +49,13 @@ import json,sys
 print(json.dumps({'name':sys.argv[1],'address':sys.argv[2],'agent_port':int(sys.argv[3]),'token':sys.argv[4]}))
 PY
 )"
-  curl -fsS -H 'Content-Type: application/json' -d "$PAYLOAD" "$API" >/dev/null || { echo "$(msg bad)"; return 1; }
+  curl -fsS "${AUTH_ARGS[@]}" -H 'Content-Type: application/json' -d "$PAYLOAD" "$API" >/dev/null || { echo "$(msg bad)"; return 1; }
   echo "$(msg added)"
 }
 remove_node(){
   list_nodes || return 1
   local id=''; read_tty id "$(msg id)"; [[ -n "$id" ]] || return 1
-  curl -fsS -X DELETE "$API/$id" >/dev/null || { echo "$(msg bad)"; return 1; }
+  curl -fsS "${AUTH_ARGS[@]}" -X DELETE "$API/$id" >/dev/null || { echo "$(msg bad)"; return 1; }
   echo "$(msg removed)"
 }
 

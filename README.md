@@ -1,75 +1,96 @@
 # tyxe_pool
 
-Private-development project for a self-hosted Telemt enter/exit pool.
+Self-hosted controller for a Telemt enter/exit topology.
 
-Target topology:
+Current development topology:
 
 ```text
-Client -> RU ENTER -> selfsteal/classifier -> HAProxy -> AWG/transport -> PL EXIT(s) -> Telemt
+Client -> RU ENTER -> selfsteal/classifier -> transport -> PL EXIT -> Telemt
 ```
+
+During the stabilization phase tyxe_pool intentionally uses **one ENTER and one EXIT**. Multiple EXIT nodes will be enabled only after the base chain is proven stable.
 
 ## Current version
 
-`v0.2.0` — bilingual installer + persistent certificates + Node Manager MVP.
+`v0.2.1` — public curl bootstrap + authenticated web panel.
 
 Implemented:
 
-- Russian/English language choice at the very beginning of installation;
-- the selected language is stored and used by the controller web panel;
-- numeric menu selection and `y/n` confirmations;
-- explanatory text before important installer steps;
+- public GitHub bootstrap via `curl`, no GitHub token required;
+- Russian/English language selection at the start;
+- selected language is applied to the web panel;
+- numeric menu choices and `y/n` confirmations;
+- explanatory installer steps;
 - ENTER/controller and EXIT/node-agent roles;
-- persistent transaction manifest across upgrades;
-- failed installation rolls back only the current transaction;
-- full uninstall rolls back all recorded project changes;
-- Let’s Encrypt certificates under `/etc/letsencrypt` are never removed by tyxe_pool rollback;
-- existing certificates are detected and can be reused instead of reissued;
-- minimal localized central web panel;
-- add/remove EXIT nodes from the web panel;
-- CLI node manager: `tyxe-pool-node`;
-- optional node registration at the end of controller installation;
+- persistent rollback manifest across upgrades;
+- Let’s Encrypt certificates survive rollback/uninstall and can be reused;
+- controller admin username/password setup during installation;
+- PBKDF2-SHA256 password storage (no plaintext admin password on disk);
+- signed HttpOnly panel sessions + SameSite cookies;
+- CSRF protection for state-changing web API calls;
+- controller remains bound to `127.0.0.1`;
+- optional Internet-facing panel through nginx HTTPS reverse proxy;
+- separate panel hostname supported (recommended: `panel.example.com`);
+- per-IP login throttling in nginx for public mode;
 - node-agent bearer token;
-- controller polls agent health and displays Telemt status, uptime, load and RAM;
-- HAProxy and selfsteal configuration templates retained for the next dataplane milestone.
+- add/remove EXIT node from web UI and `tyxe-pool-node` CLI;
+- controller displays agent/Telemt service status, load, RAM and uptime.
 
 Not production-ready yet:
 
-- final shared-port `443` classifier/selfsteal;
-- automatic AWG provisioning;
-- SSH bootstrap of remote EXIT nodes;
-- automatic Telemt installation and configuration;
-- centralized users/secrets synchronization;
-- Globalping and end-to-end Telegram health checks;
-- automatic HAProxy backend generation and `UP/DOWN/DRAIN` lifecycle;
-- production authentication for the controller panel;
-- encrypted/mTLS controller↔agent transport.
+- MTProxyL/Telemt provisioning;
+- final shared-port 443 selfsteal/classifier;
+- AmneziaWG transport provisioning;
+- synchronized Telemt users/secrets;
+- Globalping / end-to-end Telegram checks;
+- HAProxy exit selection/failover;
+- multiple EXIT nodes.
 
-## Install from a clone
+## Install from public GitHub with curl
+
+Replace `OWNER` with the GitHub account that owns `tyxe_pool`:
 
 ```bash
-git clone git@github.com:OWNER/tyxe_pool.git
-cd tyxe_pool
-sudo ./install.sh
+curl -fsSL https://raw.githubusercontent.com/OWNER/tyxe_pool/main/install.sh \
+  | sudo bash -s -- --repo OWNER/tyxe_pool
 ```
 
-The first prompt is always the language:
+Install a tagged version instead of `main`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/tyxe_pool/v0.2.1/install.sh \
+  | sudo bash -s -- --repo OWNER/tyxe_pool --ref v0.2.1
+```
+
+The bootstrap downloads the rest of the public repository into a temporary directory and starts the full interactive installer. The temporary checkout is removed automatically.
+
+## Panel modes
+
+The ENTER installer offers:
 
 ```text
-1) Русский
-2) English
+1) Localhost only + SSH tunnel
+2) Public HTTPS panel
 ```
 
-All menu choices use numbers and confirmations use `y/n`.
+The controller process always listens on `127.0.0.1`. In public mode nginx exposes the configured panel hostname over HTTPS and reverse-proxies to the local controller.
+
+Recommended domain layout:
+
+```text
+example.com       -> proxy / selfsteal hostname
+panel.example.com -> TYXE Pool panel
+```
+
+The installer asks for an administrator username and password twice. The password itself is never written to disk; only a PBKDF2-SHA256 hash is stored in `/etc/proxy-pool/settings.env`.
 
 ## Node management
-
-On an installed controller:
 
 ```bash
 sudo tyxe-pool-node
 ```
 
-or directly:
+or:
 
 ```bash
 sudo tyxe-pool-node list
@@ -77,79 +98,34 @@ sudo tyxe-pool-node add
 sudo tyxe-pool-node remove
 ```
 
-Nodes can also be added/removed in the web panel.
-
-The EXIT installer prints a per-node API token. Add that token together with the node address and agent port on the controller. Prefer an AWG/private tunnel address when available; the v0.2 agent API itself is HTTP and should not be exposed over an untrusted network.
-
-## Panel access
-
-By default the controller binds to `127.0.0.1:9101`.
-
-Example SSH tunnel:
-
-```bash
-ssh -L 9101:127.0.0.1:9101 root@ENTER_VPS_IP
-```
-
-Then open:
-
-```text
-http://127.0.0.1:9101/
-```
-
 ## Certificates
 
-Certificates are deliberately **persistent** and are not part of the rollback manifest.
+Certificates are persistent and are intentionally outside the rollback lifecycle. When a certificate already exists, the installer offers to reuse it rather than issue another one.
 
-Certificates issued by tyxe_pool are kept outside the rollback tree in:
-
-```text
-/var/lib/tyxe-pool-persistent/letsencrypt/live/<domain>/
-```
-
-If a matching certificate already exists in the system-standard `/etc/letsencrypt/live/<domain>/`, the installer can reuse it as well. A v0.1 custom ACME store is migrated to the persistent store on upgrade.
-
-On reinstall, the installer checks for an existing certificate and offers:
+Primary persistent store:
 
 ```text
-1) Reuse existing certificate
-2) Issue a new certificate
-3) Skip for now
+/var/lib/tyxe-pool-persistent/letsencrypt/
 ```
 
-This avoids needless repeated ACME issuance while developing/testing tyxe_pool.
+Existing system Certbot certificates under `/etc/letsencrypt/` can also be reused.
 
 ## Rollback / uninstall
 
 Preview:
 
 ```bash
-sudo ./uninstall.sh --dry-run
-```
-
-Full project rollback:
-
-```bash
-sudo ./uninstall.sh
-```
-
-The rollback engine is also installed locally:
-
-```bash
 sudo /usr/local/sbin/proxy-pool-rollback --dry-run
+```
+
+Full rollback of tyxe_pool-managed changes:
+
+```bash
 sudo /usr/local/sbin/proxy-pool-rollback --purge-state
 ```
 
-Let’s Encrypt certificates are intentionally preserved.
+Certificates are preserved.
 
-## Development rule
+## Security rule
 
-Never commit real credentials, including:
-
-- GitHub tokens;
-- Cloudflare tokens;
-- SSH private keys;
-- node-agent tokens;
-- Telemt user secrets;
-- TLS private keys;
-- generated `.env`/credential files.
+Never commit real credentials, including node tokens, Telemt user secrets, API tokens, SSH private keys, TLS private keys or generated settings files.

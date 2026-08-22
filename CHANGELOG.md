@@ -1,14 +1,21 @@
 # Changelog
 
-## 0.2.0
+## v0.2.1
 
-- Added Russian/English language selection and localized web panel.
-- Changed all installer menus to numeric choices and y/n confirmations.
-- Certificates are now persistent across rollback/uninstall.
-- Added detection/reuse of an existing Let’s Encrypt certificate.
-- Installer manifest now accumulates across upgrades; failed attempts roll back only their own transaction.
-- Added `tyxe-pool-node` CLI Node Manager.
-- Added add/remove-node form to the controller panel.
-- Added per-node agent API token.
-- Added Telemt status, uptime, load and memory reporting from agents.
-- Added optional node registration at the end of controller installation.
+- Switched remote bootstrap to anonymous downloads from a public GitHub repository.
+- Added `--repo OWNER/tyxe_pool` and `--ref` bootstrap options.
+- Added administrator username/password wizard for the controller.
+- Passwords are stored as PBKDF2-SHA256 hashes, never plaintext.
+- Added localized login screen and signed HttpOnly sessions.
+- Added SameSite cookie and CSRF protection for browser mutations.
+- Added separate local API bearer token for `tyxe-pool-node`.
+- Added optional Internet-facing panel via nginx HTTPS reverse proxy while controller remains on localhost.
+- Added separate panel-domain certificate reuse/issuance.
+- Added nginx per-IP login throttling for public panel mode.
+- Development topology temporarily fixed to one ENTER + one EXIT.
+
+## v0.2.0
+
+- Bilingual installer/panel.
+- Persistent certificates.
+- Node Manager MVP.

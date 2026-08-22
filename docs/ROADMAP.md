@@ -1,62 +1,54 @@
-# tyxe_pool roadmap
+# Roadmap
 
-## v0.2.0 — Node Manager foundation
+## v0.2.1 — panel/auth/bootstrap
 
-- RU/EN installer and UI.
-- Persistent Let’s Encrypt certificate reuse.
-- Transactional multi-version rollback.
-- EXIT agent registration from CLI and web UI.
-- Agent authentication and basic system/Telemt status.
+Public curl bootstrap, bilingual authenticated controller, persistent TLS and single ENTER + single EXIT development topology.
 
-## v0.3.0 — Remote provisioning + Telemt control
+## v0.3.0 — Telemt + MTProxyL on EXIT
 
-Planned:
+Planned first real proxy-engine milestone:
 
-- add a new EXIT by SSH from the controller;
-- copy/install tyxe_pool agent remotely;
-- discover an existing Telemt installation;
-- install Telemt only after explicit confirmation;
-- backup Telemt configuration before every change;
-- start/stop/restart/update Telemt from the panel;
-- centralized logs;
-- desired/actual configuration version tracking.
+- install MTProxyL on the EXIT node using its argument-driven manager installation;
+- use Telemt as the engine;
+- expose only the tunnel-side Telemt listener when double-hop mode is enabled;
+- choose/store FakeTLS/SNI settings centrally;
+- install/own the Telemt engine through MTProxyL Manager and expose MTProxyL controls/metrics to TYXE;
+- keep client-facing TCP anti-DPI fixes separate until the ENTER dataplane is active (the client TCP session terminates at ENTER/HAProxy, so those rules must be validated on ENTER rather than assumed to work on EXIT);
+- read Telemt REST API/metrics from TYXE agent;
+- start/stop/restart/update engine from the main TYXE panel;
+- backup configuration before every write;
+- rollback the TYXE-created MTProxyL/Telemt installation without touching persistent TLS.
 
-## v0.4.0 — Central users/secrets
+## v0.4.0 — users/secrets
 
-Planned:
+- central user database;
+- create/disable users in TYXE panel;
+- deterministic synchronization to EXIT Telemt;
+- desired/actual config revisions;
+- traffic/connection aggregation.
 
-- one source of truth for Telemt users;
-- same user secret on every EXIT;
-- create/disable/remove users from one panel;
-- atomic config deployment and rollback;
-- per-node synchronization state.
+## v0.5.0 — transport, dataplane and client-facing fixes
 
-## v0.5.0 — Multi-exit dataplane
+- AmneziaWG ENTER<->EXIT setup;
+- HAProxy/TCP forwarding based on Telemt double-hop design;
+- preserve Proxy Protocol where required;
+- validate/apply the selected MTProxyL-derived client-facing TCP fix profile on ENTER;
+- end-to-end health state.
 
-Planned:
+## v0.6.0 — selfsteal/shared 443
 
-- multiple RU→EXIT transports;
-- HAProxy backend generation;
-- leastconn / roundrobin / weighted / primary-backup modes;
-- UP / DOWN / DRAIN / DISABLED states;
-- graceful reload and maintenance mode.
+- final shared-port entry classifier;
+- normal web decoy for unrelated traffic;
+- panel hostname coexistence;
+- no management information on proxy hostname.
 
-## v0.6.0 — Health and Globalping
+## v0.7.0 — Globalping and failover groundwork
 
-Planned:
+- Globalping integration;
+- Russia-region reachability checks;
+- Telegram end-to-end probes;
+- health history/events.
 
-- Globalping availability checks;
-- tunnel checks;
-- Telemt checks;
-- end-to-end Telegram path checks;
-- automatic exit quarantine/recovery with hysteresis.
+## Later
 
-## v0.7.0 — Selfsteal shared :443
-
-Planned:
-
-- shared-port classifier;
-- ordinary HTTPS decoy site for unrelated traffic;
-- proxy traffic forwarded to dataplane;
-- panel kept on a separate management endpoint;
-- configurable decoy website and certificate lifecycle.
+Only after one ENTER + one EXIT is stable: enable PL2/PL3 and HAProxy balancing/failover policies.

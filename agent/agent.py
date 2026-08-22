@@ -60,7 +60,7 @@ def status():
         "telemt": is_active(TELEMT_SERVICE),
         "telemt_service": TELEMT_SERVICE,
         "language": LANG,
-        "agent_version": "0.2.0",
+        "agent_version": "0.2.1",
     }
 
 

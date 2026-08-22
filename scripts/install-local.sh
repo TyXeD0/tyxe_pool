@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION='0.2.0'
+VERSION='0.2.1'
 ROOT='/opt/proxy-pool'
 ETC='/etc/proxy-pool'
 STATE='/var/lib/proxy-pool'
@@ -57,10 +57,14 @@ TXT
       basic) echo 'Основные параметры';;
       proxy_domain_desc) echo 'Домен прокси/selfsteal должен указывать A/AAAA-записью на этот ENTER VPS. Он будет использоваться для сайта-заглушки и сертификата.';;
       proxy_domain) echo 'Домен прокси/selfsteal';;
-      panel_domain_desc) echo 'Домен панели сохраняется для будущего HTTPS reverse-proxy. В v0.2 панель по умолчанию слушает localhost для безопасного доступа через SSH-туннель.';;
-      panel_domain) echo 'Домен панели (можно оставить пустым)';;
-      panel_bind_desc) echo 'Адрес 127.0.0.1 не публикует панель в Интернет. 0.0.0.0 использовать только если вы понимаете риск.';;
-      panel_bind) echo 'Bind-адрес панели';; panel_port) echo 'Порт панели';;
+      panel_access_desc) echo 'Выберите способ доступа к панели. Публичный режим использует HTTPS и обязательную авторизацию; сам controller остаётся на localhost.';;
+      panel_mode1) echo '1) Только localhost + SSH-туннель';; panel_mode2) echo '2) Опубликовать панель в Интернет по HTTPS';;
+      panel_domain_desc) echo 'Для публичной панели рекомендуется отдельный поддомен, например panel.mydomain.link. DNS должен указывать на ENTER VPS.';;
+      panel_domain) echo 'Домен панели';; panel_port) echo 'Внутренний порт панели';;
+      admin_desc) echo 'Создайте учётную запись администратора панели. Пароль хранится только как PBKDF2-SHA256 хеш.';;
+      admin_user) echo 'Логин администратора';; admin_pass) echo 'Пароль администратора: ';; admin_pass2) echo 'Повторите пароль: ';;
+      admin_bad_user) echo 'Логин: 3–32 символа, только латинские буквы, цифры, точка, подчёркивание или дефис.';; admin_short) echo 'Пароль должен содержать не менее 12 символов.';; admin_mismatch) echo 'Пароли не совпадают.';;
+      public_https) echo 'Публичная панель будет доступна только по HTTPS. Если сертификат получить не удастся, панель останется локальной.';;
       agent_desc) echo 'Агент отдаёт controller только технический статус ноды. Для /v1/status можно использовать отдельный bearer-token.';;
       agent_port) echo 'Порт node-agent';; telemt_service) echo 'Имя systemd-сервиса Telemt';; node_name) echo 'Имя ноды';; agent_bind) echo 'Bind-адрес node-agent';;
       gen_token) echo 'Сгенерировать новый API token для node-agent?';; enter_token) echo 'Введите API token node-agent: ';;
@@ -77,7 +81,7 @@ TXT
       issuing) echo 'Запрашиваю сертификат Let’s Encrypt...';; cert_ok) echo 'Сертификат успешно получен и сохранён в постоянном хранилище. Rollback его не удалит.';; cert_fail) echo 'Не удалось получить сертификат.';; continue_no_cert) echo 'Продолжить установку без нового сертификата?';;
       final) echo 'Финальная проверка';; done) echo 'Установка завершена.';;
       add_now) echo 'Добавить EXIT-ноду в controller сейчас?';; add_later) echo 'Ноду можно добавить позже командой tyxe-pool-node или через веб-панель.';;
-      panel_access) echo 'Локальный адрес веб-панели';; ssh_hint) echo 'Для доступа с компьютера можно использовать SSH-туннель';;
+      panel_access) echo 'Адрес веб-панели';; ssh_hint) echo 'Для доступа с компьютера можно использовать SSH-туннель';;
       agent_token_out) echo 'API token этой EXIT-ноды (сохраните его; он потребуется при добавлении ноды в controller)';;
       rollback) echo 'Полный откат';; dryrun) echo 'Предварительный просмотр отката';;
       bad_choice) echo 'Неверный выбор.';;
@@ -106,10 +110,14 @@ TXT
       basic) echo 'Basic parameters';;
       proxy_domain_desc) echo 'The proxy/selfsteal domain must resolve to this ENTER VPS. It is used for the decoy website and TLS certificate.';;
       proxy_domain) echo 'Proxy/selfsteal domain';;
-      panel_domain_desc) echo 'The panel domain is stored for a future HTTPS reverse proxy. In v0.2 the panel binds to localhost by default for safe SSH-tunnel access.';;
-      panel_domain) echo 'Panel domain (may be blank)';;
-      panel_bind_desc) echo '127.0.0.1 keeps the panel off the public Internet. Use 0.0.0.0 only if you understand the risk.';;
-      panel_bind) echo 'Panel bind address';; panel_port) echo 'Panel port';;
+      panel_access_desc) echo 'Choose how the panel is accessed. Public mode uses HTTPS and mandatory authentication; the controller itself still binds to localhost.';;
+      panel_mode1) echo '1) Localhost only + SSH tunnel';; panel_mode2) echo '2) Publish the panel on the Internet over HTTPS';;
+      panel_domain_desc) echo 'For a public panel, use a separate hostname such as panel.mydomain.link. DNS must resolve to the ENTER VPS.';;
+      panel_domain) echo 'Panel domain';; panel_port) echo 'Internal panel port';;
+      admin_desc) echo 'Create the panel administrator account. The password is stored only as a PBKDF2-SHA256 hash.';;
+      admin_user) echo 'Administrator username';; admin_pass) echo 'Administrator password: ';; admin_pass2) echo 'Repeat password: ';;
+      admin_bad_user) echo 'Username must be 3–32 characters: letters, digits, dot, underscore or hyphen.';; admin_short) echo 'Password must be at least 12 characters.';; admin_mismatch) echo 'Passwords do not match.';;
+      public_https) echo 'The public panel is exposed only over HTTPS. If a certificate cannot be obtained, the panel remains local.';;
       agent_desc) echo 'The agent exposes technical node status to the controller. /v1/status can be protected by a dedicated bearer token.';;
       agent_port) echo 'Node-agent port';; telemt_service) echo 'Telemt systemd service name';; node_name) echo 'Node name';; agent_bind) echo 'Node-agent bind address';;
       gen_token) echo 'Generate a new node-agent API token?';; enter_token) echo 'Enter node-agent API token: ';;
@@ -125,7 +133,7 @@ TXT
       issuing) echo 'Requesting Let’s Encrypt certificate...';; cert_ok) echo 'Certificate issued and stored in persistent storage. Rollback will preserve it.';; cert_fail) echo 'Certificate issuance failed.';; continue_no_cert) echo 'Continue installation without a new certificate?';;
       final) echo 'Final checks';; done) echo 'Installation completed.';;
       add_now) echo 'Add an EXIT node to the controller now?';; add_later) echo 'You can add a node later with tyxe-pool-node or from the web panel.';;
-      panel_access) echo 'Local web-panel address';; ssh_hint) echo 'To access it from your computer, you can use an SSH tunnel';;
+      panel_access) echo 'Web-panel address';; ssh_hint) echo 'To access it from your computer, you can use an SSH tunnel';;
       agent_token_out) echo 'API token for this EXIT node (save it; you will need it when adding the node to the controller)';;
       rollback) echo 'Full rollback';; dryrun) echo 'Rollback preview';;
       bad_choice) echo 'Invalid choice.';;
@@ -136,6 +144,18 @@ TXT
 ask(){ local prompt="$1" def="${2:-}" v=''; read_tty v "$prompt${def:+ [$def]}: "; printf '%s' "${v:-$def}"; }
 yesno(){ local prompt="$1" def="${2:-y}" v=''; while :; do read_tty v "$prompt [y/n] (${def}): "; v="${v:-$def}"; case "$v" in y|Y|yes|YES|Yes) return 0;; n|N|no|NO|No) return 1;; *) echo 'y/n';; esac; done; }
 choice(){ local prompt="$1" min="$2" max="$3" v=''; while :; do read_tty v "$prompt"; if [[ "$v" =~ ^[0-9]+$ ]] && (( v>=min && v<=max )); then printf '%s' "$v"; return; fi; echo "$(m bad_choice)"; done; }
+make_password_hash(){
+  local password="$1"
+  python3 - "$password" <<'PYHASH'
+import hashlib, os, sys
+pw=sys.argv[1].encode()
+salt=os.urandom(16)
+rounds=600000
+digest=hashlib.pbkdf2_hmac('sha256', pw, salt, rounds)
+print(f"pbkdf2_sha256:{rounds}:{salt.hex()}:{digest.hex()}")
+PYHASH
+}
+random_hex(){ head -c "${1:-32}" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 root_check(){ [[ $EUID -eq 0 ]] || { red "$(m root)"; exit 1; }; }
 
 backup_path(){
@@ -235,24 +255,56 @@ PANEL_DOMAIN=''
 ACME_EMAIL=''
 PANEL_BIND='127.0.0.1'
 PANEL_PORT='9101'
+PANEL_MODE='local'
+ADMIN_USER='admin'
+ADMIN_PASS=''
+ADMIN_HASH=''
+SESSION_SECRET=''
+LOCAL_API_TOKEN=''
+COOKIE_SECURE='0'
 AGENT_BIND='0.0.0.0'
 AGENT_PORT='9100'
 TELEMT_SERVICE='telemt'
 NODE_NAME="$(hostname -s)"
 AGENT_TOKEN=''
 CERT_MODE='skip'
+PANEL_CERT_MODE='skip'
 
 section "$(m basic)"
 if [[ "$ROLE" == controller ]]; then
   echo "$(m proxy_domain_desc)"
   PROXY_DOMAIN=$(ask "$(m proxy_domain)" 'proxy.example.com')
   echo
-  echo "$(m panel_domain_desc)"
-  PANEL_DOMAIN=$(ask "$(m panel_domain)" '')
-  echo
-  echo "$(m panel_bind_desc)"
-  PANEL_BIND=$(ask "$(m panel_bind)" '127.0.0.1')
+  echo "$(m panel_access_desc)"
+  printf '%s\n%s\n' "$(m panel_mode1)" "$(m panel_mode2)"
+  pm=$(choice "$(m choose)" 1 2)
+  [[ "$pm" == 2 ]] && PANEL_MODE='public' || PANEL_MODE='local'
+  if [[ "$PANEL_MODE" == public ]]; then
+    echo "$(m panel_domain_desc)"
+    PANEL_DOMAIN=$(ask "$(m panel_domain)" "panel.$PROXY_DOMAIN")
+    COOKIE_SECURE='1'
+    yellow "$(m public_https)"
+  fi
   PANEL_PORT=$(ask "$(m panel_port)" '9101')
+  echo
+  echo "$(m admin_desc)"
+  while :; do
+    ADMIN_USER=$(ask "$(m admin_user)" 'admin')
+    [[ "$ADMIN_USER" =~ ^[A-Za-z0-9._-]{3,32}$ ]] && break
+    red "$(m admin_bad_user)"
+  done
+  while :; do
+    read_tty ADMIN_PASS "$(m admin_pass)" 1
+    if (( ${#ADMIN_PASS} < 12 )); then red "$(m admin_short)"; continue; fi
+    local_confirm=''
+    read_tty local_confirm "$(m admin_pass2)" 1
+    [[ "$ADMIN_PASS" == "$local_confirm" ]] || { red "$(m admin_mismatch)"; continue; }
+    break
+  done
+  ADMIN_HASH="$(make_password_hash "$ADMIN_PASS")"
+  unset ADMIN_PASS local_confirm
+  SESSION_SECRET="$(random_hex 32)"
+  LOCAL_API_TOKEN="$(random_hex 32)"
 else
   echo "$(m agent_desc)"
   NODE_NAME=$(ask "$(m node_name)" "$(hostname -s)")
@@ -304,10 +356,17 @@ if [[ "$ROLE" == controller ]]; then
 PROXY_POOL_LANG=$LANG_CODE
 PROXY_POOL_ROLE=controller
 PROXY_POOL_HOME=$ETC
-PROXY_POOL_BIND=$PANEL_BIND
+PROXY_POOL_BIND=127.0.0.1
 PROXY_POOL_PORT=$PANEL_PORT
 PROXY_POOL_PROXY_DOMAIN=$PROXY_DOMAIN
 PROXY_POOL_PANEL_DOMAIN=$PANEL_DOMAIN
+PROXY_POOL_PANEL_MODE=$PANEL_MODE
+PROXY_POOL_ADMIN_USER=$ADMIN_USER
+PROXY_POOL_ADMIN_HASH=$ADMIN_HASH
+PROXY_POOL_SESSION_SECRET=$SESSION_SECRET
+PROXY_POOL_LOCAL_API_TOKEN=$LOCAL_API_TOKEN
+PROXY_POOL_COOKIE_SECURE=$COOKIE_SECURE
+PROXY_POOL_SESSION_TTL=43200
 PROXY_POOL_POLL_INTERVAL=5"
   write_file "$ETC/settings.env" 0600 "$SETTINGS_CONTENT"
   install_file "$SCRIPT_DIR/../systemd/proxy-pool-controller.service" /etc/systemd/system/proxy-pool-controller.service 0644
@@ -323,6 +382,17 @@ PROXY_POOL_POLL_INTERVAL=5"
     location /.well-known/acme-challenge/ { allow all; }
     location / { try_files \$uri \$uri/ /index.html; }
 }"
+  if [[ "$PANEL_MODE" == public ]]; then
+    NGINX_CONF+="
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $PANEL_DOMAIN;
+    root /var/www/proxy-pool-selfsteal;
+    location /.well-known/acme-challenge/ { allow all; }
+    location / { return 404; }
+}"
+  fi
   write_file "$ETC/selfsteal/nginx.conf" 0644 "$NGINX_CONF"
   record_path FILE /etc/nginx/sites-enabled/proxy-pool-selfsteal.conf
   ln -sfn "$ETC/selfsteal/nginx.conf" /etc/nginx/sites-enabled/proxy-pool-selfsteal.conf
@@ -382,6 +452,87 @@ if [[ "$ROLE" == controller ]]; then
   # Persist choice in settings (certificate files themselves remain outside the rollback manifest).
   CERT_SOURCE="$(detect_cert_source "$PROXY_DOMAIN")"
   printf 'PROXY_POOL_CERT_MODE=%s\nPROXY_POOL_CERT_STORE=%s\n' "$CERT_MODE" "$CERT_SOURCE" >> "$ETC/settings.env"
+
+  # Public panel: obtain/reuse a separate TLS certificate, then expose only nginx:443.
+  if [[ "$PANEL_MODE" == public ]]; then
+    migrate_legacy_cert_store "$PANEL_DOMAIN"
+    if cert_exists "$PANEL_DOMAIN"; then
+      green "$(m cert_found): $PANEL_DOMAIN"
+      echo "$(m cert_expiry): $(cert_expiry "$PANEL_DOMAIN")"
+      echo "$(m cert_choose)"
+      printf '%s\n%s\n%s\n' "$(m cert1)" "$(m cert2)" "$(m cert3)"
+      pc=$(choice "$(m choose)" 1 3)
+      case "$pc" in 1) PANEL_CERT_MODE='existing';; 2) PANEL_CERT_MODE='new';; 3) PANEL_CERT_MODE='skip';; esac
+    else
+      yellow "$(m cert_none): $PANEL_DOMAIN"
+      printf '%s\n%s\n' "$(m cert_none1)" "$(m cert_none2)"
+      pc=$(choice "$(m choose)" 1 2)
+      [[ "$pc" == 1 ]] && PANEL_CERT_MODE='new' || PANEL_CERT_MODE='skip'
+    fi
+    if [[ "$PANEL_CERT_MODE" == new ]]; then
+      if [[ -z "$ACME_EMAIL" ]]; then echo "$(m email_desc)"; ACME_EMAIL=$(ask "$(m acme_email)" ''); fi
+      yellow "$(m issuing)"
+      if issue_cert "$PANEL_DOMAIN" "$ACME_EMAIL"; then
+        green "$(m cert_ok)"
+      else
+        red "$(m cert_fail)"
+        PANEL_CERT_MODE='skip'
+      fi
+    fi
+
+    if cert_exists "$PANEL_DOMAIN" && [[ "$PANEL_CERT_MODE" != skip ]]; then
+      PANEL_CERT_FILE="$(cert_path "$PANEL_DOMAIN")"
+      PANEL_KEY_FILE="$(cert_key_path "$PANEL_DOMAIN")"
+      # Basic per-IP login throttling for an Internet-facing panel.
+      write_file /etc/nginx/conf.d/tyxe-pool-limit.conf 0644 'limit_req_zone $binary_remote_addr zone=tyxe_login:10m rate=5r/m;'
+      NGINX_FINAL="$NGINX_CONF
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name $PANEL_DOMAIN;
+    ssl_certificate $PANEL_CERT_FILE;
+    ssl_certificate_key $PANEL_KEY_FILE;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+    location = /login {
+        limit_req zone=tyxe_login burst=5 nodelay;
+        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+    location / {
+        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $PANEL_DOMAIN;
+    root /var/www/proxy-pool-selfsteal;
+    location /.well-known/acme-challenge/ { allow all; }
+    location / { return 301 https://\$host\$request_uri; }
+}"
+      write_file "$ETC/selfsteal/nginx.conf" 0644 "$NGINX_FINAL"
+      nginx -t
+      systemctl reload nginx
+      printf 'PROXY_POOL_PANEL_CERT_MODE=%s\n' "$PANEL_CERT_MODE" >> "$ETC/settings.env"
+    else
+      yellow "$(m public_https)"
+      PANEL_MODE='local'; COOKIE_SECURE='0'
+      printf 'PROXY_POOL_PANEL_MODE=local\nPROXY_POOL_COOKIE_SECURE=0\nPROXY_POOL_PANEL_CERT_MODE=skip\n' >> "$ETC/settings.env"
+    fi
+    systemctl restart proxy-pool-controller
+  fi
 fi
 
 section "$(m final)"
@@ -389,8 +540,12 @@ if [[ "$ROLE" == controller ]]; then
   systemctl is-active --quiet proxy-pool-controller
   curl -fsS "http://127.0.0.1:$PANEL_PORT/healthz" >/dev/null
   green "$(m done)"
-  echo "$(m panel_access): http://127.0.0.1:$PANEL_PORT/"
-  echo "$(m ssh_hint): ssh -L ${PANEL_PORT}:127.0.0.1:${PANEL_PORT} root@YOUR_VPS_IP"
+  if [[ "$PANEL_MODE" == public ]]; then
+    echo "$(m panel_access): https://$PANEL_DOMAIN/"
+  else
+    echo "$(m panel_access): http://127.0.0.1:$PANEL_PORT/"
+    echo "$(m ssh_hint): ssh -L ${PANEL_PORT}:127.0.0.1:${PANEL_PORT} root@YOUR_VPS_IP"
+  fi
   echo
   if yesno "$(m add_now)" n; then
     /usr/local/sbin/tyxe-pool-node add || yellow "$(m add_later)"
