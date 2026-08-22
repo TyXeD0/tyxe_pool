@@ -24,38 +24,41 @@ yesno(){ local p="$1" v=''; read -r -p "$p [y/N]: " v </dev/tty || true; [[ "$v"
 
 [[ $EUID -eq 0 ]] || { red 'Запустите через sudo/root.'; exit 1; }
 
-require_enter(){
+require_role(){
   [[ -r $ETC/settings.env ]] || { red 'TYXE Controller не найден.'; return 1; }
   [[ "$(getenv_file "$ETC/settings.env" PROXY_POOL_ROLE)" == controller ]] || { red 'Анти-DPI модуль ставится на ENTER/controller.'; return 1; }
-  systemctl is-active haproxy >/dev/null 2>&1 || { red 'HAProxy не active. Сначала должен быть настроен dataplane.'; return 1; }
-  ss -ltnpH 'sport = :443' 2>/dev/null | grep -q haproxy || { red 'HAProxy не слушает TCP/443 на ENTER.'; return 1; }
   install -d -m 700 "$STATE_DIR"
 }
 
+require_dataplane(){
+  require_role
+  systemctl is-active haproxy >/dev/null 2>&1 || { red 'HAProxy не active. Сначала настройте dataplane.'; return 1; }
+  ss -ltnpH 'sport = :443' 2>/dev/null | grep -q haproxy || { red 'HAProxy не слушает TCP/443 на ENTER.'; return 1; }
+}
+
+unit_exists(){ systemctl cat "$1" >/dev/null 2>&1; }
+table_exists(){ command -v nft >/dev/null 2>&1 && nft list table ip "$1" >/dev/null 2>&1; }
+
 pick_queue(){
-  local q used
-  used=''
+  local q used=''
   [[ -r /proc/net/netfilter/nfnetlink_queue ]] && used=$(awk '{print $1}' /proc/net/netfilter/nfnetlink_queue 2>/dev/null || true)
   for q in $(seq 200 239); do
-    if ! grep -qx "$q" <<<"$used"; then
-      QNUM=$q
-      return 0
-    fi
+    if ! grep -qx "$q" <<<"$used"; then QNUM=$q; return 0; fi
   done
-  red 'Не удалось найти свободную NFQUEUE в диапазоне 200..239.'
+  red 'Нет свободной NFQUEUE в диапазоне 200..239.'
   return 1
 }
 
 preflight(){
   cyan 'Preflight anti-DPI'
-  require_enter
+  require_dataplane
   [[ ! -e $STATE_FILE ]] || { red 'TYXE Zapret2 уже настроен. Используйте status или rollback.'; return 1; }
-  if systemctl list-unit-files mtproxyl-zapret2.service >/dev/null 2>&1 || nft list table ip MTProtoL >/dev/null 2>&1; then
+  if unit_exists mtproxyl-zapret2.service || table_exists MTProtoL; then
     red 'Обнаружен существующий MTProxyL Zapret2. Два обработчика TCP/443 одновременно ставить нельзя.'
     return 1
   fi
-  if systemctl list-unit-files tyxe-zapret2.service >/dev/null 2>&1 || nft list table ip "$TABLE" >/dev/null 2>&1; then
-    red 'Найдены остатки предыдущего TYXE Zapret2 без state. Удалите их вручную после проверки.'
+  if unit_exists tyxe-zapret2.service || table_exists "$TABLE"; then
+    red 'Найдены остатки TYXE Zapret2 без state. Нужна ручная проверка перед повторной установкой.'
     return 1
   fi
   pick_queue
@@ -71,9 +74,21 @@ install_deps(){
   modprobe nfnetlink_queue
 }
 
+save_state(){
+  local old_tw
+  old_tw=$(sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null || echo 2)
+  umask 077
+  {
+    printf 'QNUM=%q\n' "$QNUM"
+    printf 'PORT=%q\n' "$PORT"
+    printf 'OLD_TCP_TW_REUSE=%q\n' "$old_tw"
+    printf 'ZAPRET2_VER=%q\n' "$ZAPRET2_VER"
+  } > "$STATE_FILE"
+}
+
 install_zapret2(){
   cyan 'Zapret2'
-  local machine arch tmp unpack root lua_dir
+  local machine arch tmp unpack zroot lua_dir=''
   machine=$(uname -m)
   case "$machine" in
     x86_64|amd64) arch=linux-x86_64 ;;
@@ -82,24 +97,21 @@ install_zapret2(){
   esac
   tmp=$(mktemp /tmp/tyxe-zapret2.XXXXXX.tar.gz)
   unpack=$(mktemp -d /tmp/tyxe-zapret2.XXXXXX)
-  trap 'rm -rf "${tmp:-}" "${unpack:-}"' RETURN
   curl -fL --retry 3 --connect-timeout 15 -o "$tmp" \
     "https://github.com/bol-van/zapret2/releases/download/${ZAPRET2_VER}/zapret2-${ZAPRET2_VER}.tar.gz"
   tar xzf "$tmp" -C "$unpack"
-  root=$(find "$unpack" -maxdepth 1 -mindepth 1 -type d | head -n1)
-  [[ -n $root ]] || { red 'Архив zapret2 имеет неожиданную структуру.'; return 1; }
+  zroot=$(find "$unpack" -maxdepth 1 -mindepth 1 -type d | head -n1)
+  [[ -n $zroot ]] || { red 'Неожиданная структура архива zapret2.'; return 1; }
   install -d -m 755 "$ROOT/bin" "$ROOT/lua" "$CONF_DIR"
-  install -m 755 "$root/binaries/$arch/nfqws2" "$ROOT/bin/nfqws2"
-  lua_dir=''
-  for d in "$root/nfq2/lua" "$root/lua" "$root/nfq/lua"; do
+  install -m 755 "$zroot/binaries/$arch/nfqws2" "$ROOT/bin/nfqws2"
+  for d in "$zroot/nfq2/lua" "$zroot/lua" "$zroot/nfq/lua"; do
     if compgen -G "$d/zapret-lib.lua*" >/dev/null; then lua_dir=$d; break; fi
   done
   [[ -n $lua_dir ]] || { red 'Lua-библиотеки zapret2 не найдены.'; return 1; }
   cp -f "$lua_dir"/zapret-lib.lua* "$ROOT/lua/"
   cp -f "$lua_dir"/zapret-antidpi.lua* "$ROOT/lua/"
-  "$ROOT/bin/nfqws2" --version
-  trap - RETURN
   rm -rf "$tmp" "$unpack"
+  "$ROOT/bin/nfqws2" --version
 }
 
 write_profile(){
@@ -122,7 +134,6 @@ EOF
   cat > "$LUA" <<'LUAEOF'
 function tyxe_mtproto_fix(ctx, d)
     local flags = d.dis.tcp.th_flags
-
     if bitand(flags, TH_SYN + TH_ACK) == TH_SYN then
         local o = d.dis.tcp.options
         if d.dis.tcp.th_win == 65535 and #o == 8 and
@@ -134,13 +145,11 @@ function tyxe_mtproto_fix(ctx, d)
             return VERDICT_DROP
         end
     end
-
     if bitand(flags, TH_SYN + TH_ACK) == (TH_SYN + TH_ACK) then
         d.track.lua_state["tyxe_ack0"] = d.dis.tcp.th_ack
         d.dis.tcp.th_win = 1400
         return VERDICT_MODIFY
     end
-
     if direction_check(d) and bitand(flags, TH_SYN + TH_ACK) == TH_ACK then
         local a0 = d.track and d.track.lua_state["tyxe_ack0"]
         if a0 and (d.dis.tcp.th_ack - a0 >= 1400) then
@@ -152,11 +161,9 @@ function tyxe_mtproto_fix(ctx, d)
         d.dis.tcp.th_win = 10
         return VERDICT_MODIFY
     end
-
     if #d.dis.payload == 0 or d.track == nil or d.track.pos.client.tcp.rseq ~= 1 then
         return VERDICT_PASS
     end
-
     local n = 400
     local p1 = string.sub(d.dis.payload, 1, n)
     local p2 = string.sub(d.dis.payload, n + 1, 2 * n)
@@ -173,14 +180,9 @@ LUAEOF
   cat > "$START" <<EOF
 #!/usr/bin/env bash
 set -Eeuo pipefail
-TABLE='$TABLE'
-PORT='$PORT'
-QNUM='$QNUM'
-FWMARK='0x40000000'
-CTMARK='0x00040000'
-BOTH='0x40040000'
+TABLE='$TABLE'; PORT='$PORT'; QNUM='$QNUM'
+FWMARK='0x40000000'; CTMARK='0x00040000'; BOTH='0x40040000'
 ACK_ONLY='tcp flags & (fin | syn | rst | ack) == ack'
-
 sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null 2>&1 || true
 nft delete table ip "\$TABLE" 2>/dev/null || true
 nft add table ip "\$TABLE"
@@ -218,21 +220,8 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
-
   printf 'net.ipv4.tcp_tw_reuse = 1\n' > "$SYSCTL"
-  chmod 644 "$SYSCTL" "$UNIT" "$CONF" "$LUA"
-}
-
-save_state(){
-  local old_tw
-  old_tw=$(sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null || echo 2)
-  umask 077
-  {
-    printf 'QNUM=%q\n' "$QNUM"
-    printf 'PORT=%q\n' "$PORT"
-    printf 'OLD_TCP_TW_REUSE=%q\n' "$old_tw"
-    printf 'ZAPRET2_VER=%q\n' "$ZAPRET2_VER"
-  } > "$STATE_FILE"
+  chmod 644 "$UNIT" "$SYSCTL" "$CONF" "$LUA"
 }
 
 start_service(){
@@ -243,17 +232,19 @@ start_service(){
   sleep 2
   systemctl is-active tyxe-zapret2.service >/dev/null
   nft list table ip "$TABLE" >/dev/null
-  grep -q "^$QNUM " /proc/net/netfilter/nfnetlink_queue 2>/dev/null || { red "NFQUEUE $QNUM не зарегистрирована."; return 1; }
+  awk -v q="$QNUM" '$1==q{ok=1} END{exit !ok}' /proc/net/netfilter/nfnetlink_queue || {
+    red "NFQUEUE $QNUM не зарегистрирована."; return 1;
+  }
   green "Zapret2 active на client-facing TCP/$PORT (NFQUEUE $QNUM)."
 }
 
 setup(){
   preflight
-  yellow 'Будет включён серверный Zapret2 MTProto fix только на ENTER TCP/443.'
+  yellow 'Включаем серверный Zapret2 MTProto fix только на ENTER TCP/443.'
   yellow 'AWG, Telemt на EXIT и HAProxy backend не изменяются.'
   yesno 'Включить анти-DPI?' || exit 0
-  save_state
   install_deps
+  save_state
   install_zapret2
   write_profile
   if ! start_service; then
@@ -264,7 +255,7 @@ setup(){
 }
 
 status(){
-  require_enter
+  require_role
   cyan 'TYXE anti-DPI status'
   printf 'Service: '; systemctl is-active tyxe-zapret2.service 2>/dev/null || true
   printf 'HAProxy: '; systemctl is-active haproxy 2>/dev/null || true
@@ -274,22 +265,19 @@ status(){
     . "$STATE_FILE"
     printf 'NFQUEUE: %s\n' "$QNUM"
   fi
-  printf '\nNFQUEUE kernel state:\n'
-  cat /proc/net/netfilter/nfnetlink_queue 2>/dev/null || true
-  printf '\nNFT counters:\n'
-  nft list table ip "$TABLE" 2>/dev/null || true
-  printf '\nRecent log:\n'
-  journalctl -u tyxe-zapret2.service -n 20 --no-pager 2>/dev/null || true
+  printf '\nNFQUEUE kernel state:\n'; cat /proc/net/netfilter/nfnetlink_queue 2>/dev/null || true
+  printf '\nNFT counters:\n'; nft list table ip "$TABLE" 2>/dev/null || true
+  printf '\nRecent log:\n'; journalctl -u tyxe-zapret2.service -n 20 --no-pager 2>/dev/null || true
 }
 
 rollback(){
-  require_enter
+  require_role
   [[ -r $STATE_FILE ]] || { red 'State TYXE Zapret2 не найден.'; exit 1; }
   # shellcheck disable=SC1090
   . "$STATE_FILE"
   yesno 'Отключить и удалить TYXE Zapret2 anti-DPI?' || exit 0
   systemctl disable --now tyxe-zapret2.service >/dev/null 2>&1 || true
-  nft delete table ip "$TABLE" 2>/dev/null || true
+  command -v nft >/dev/null 2>&1 && nft delete table ip "$TABLE" 2>/dev/null || true
   rm -f "$UNIT" "$START" "$SYSCTL"
   rm -rf "$ROOT" "$CONF_DIR"
   systemctl daemon-reload
