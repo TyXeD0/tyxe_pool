@@ -43,6 +43,7 @@ case "$ROLE" in
     managed_install "$SCRIPT_DIR/dataplane-pair.sh" /usr/local/sbin/tyxe-dataplane 0755
     managed_install "$SCRIPT_DIR/mtproxyl-bridge.sh" /usr/local/sbin/tyxe-mtproxyl 0755
     managed_install "$SCRIPT_DIR/shared443-classifier.sh" /usr/local/sbin/tyxe-shared443 0755
+    managed_install "$SCRIPT_DIR/cert-manager.sh" /usr/local/sbin/tyxe-cert 0755
     managed_install "$SCRIPT_DIR/antidpi-zapret2.sh" /usr/local/sbin/tyxe-antidpi-fallback 0755
     ;;
   agent)
@@ -57,6 +58,7 @@ if [[ $LANG_CODE == ru ]]; then
   if [[ $ROLE == controller ]]; then
     echo 'Anti-DPI: sudo tyxe -> 5) Anti-DPI / официальный MTProxyL'
     echo 'Selfsteal: sudo tyxe -> 6) Shared TCP/443 / selfsteal classifier'
+    echo 'Сертификаты: sudo tyxe-cert status / ensure proxy / ensure panel'
     yellow 'MTProxyL специально НЕ устанавливается автоматически: актуальный upstream скачивается только при выборе пункта Anti-DPI.'
   fi
 else
@@ -65,6 +67,7 @@ else
   if [[ $ROLE == controller ]]; then
     echo 'Anti-DPI: sudo tyxe -> 5) Anti-DPI / official MTProxyL'
     echo 'Selfsteal: sudo tyxe -> 6) Shared TCP/443 / selfsteal classifier'
+    echo 'Certificates: sudo tyxe-cert status / ensure proxy / ensure panel'
     yellow 'MTProxyL is intentionally NOT installed automatically: the current upstream is downloaded only when Anti-DPI is selected.'
   fi
 fi
