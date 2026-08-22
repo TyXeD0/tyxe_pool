@@ -45,6 +45,19 @@ case "$ROLE" in
     managed_install "$SCRIPT_DIR/shared443-classifier.sh" /usr/local/sbin/tyxe-shared443 0755
     managed_install "$SCRIPT_DIR/cert-manager.sh" /usr/local/sbin/tyxe-cert 0755
     managed_install "$SCRIPT_DIR/antidpi-zapret2.sh" /usr/local/sbin/tyxe-antidpi-fallback 0755
+
+    # The base installer deliberately starts controller.py first so its own
+    # final check remains self-contained. Post-install then switches the same
+    # application/UI to the race-safe runtime wrapper.
+    managed_install "$SCRIPT_DIR/../controller/runtime.py" /opt/proxy-pool/controller/runtime.py 0755
+    managed_install "$SCRIPT_DIR/../systemd/proxy-pool-controller-runtime.conf" /etc/systemd/system/proxy-pool-controller.service.d/10-tyxe-runtime.conf 0644
+    systemctl daemon-reload
+    systemctl restart proxy-pool-controller
+    for _ in $(seq 1 20); do
+      curl -fsS --max-time 2 http://127.0.0.1:$(getenv_file "$SETTINGS" PROXY_POOL_PORT)/healthz >/dev/null 2>&1 && break
+      sleep 0.25
+    done
+    systemctl is-active --quiet proxy-pool-controller || { red 'Controller failed after runtime switch.'; exit 1; }
     ;;
   agent)
     managed_install "$SCRIPT_DIR/telemt-manager.sh" /usr/local/sbin/tyxe-telemt 0755
