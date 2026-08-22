@@ -106,7 +106,13 @@ run_installer(){
   run_postinstall "$root"
 }
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+# BASH_SOURCE is unset when install.sh is executed through `curl | bash`.
+# Keep local-checkout detection optional instead of tripping `set -u`.
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+SCRIPT_DIR=''
+if [[ -n "$SCRIPT_PATH" ]]; then
+  SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" 2>/dev/null && pwd || true)"
+fi
 if [[ -n "$SCRIPT_DIR" ]]; then
   LOCAL_INSTALLER="$(pick_installer "$SCRIPT_DIR" || true)"
   if [[ -n "$LOCAL_INSTALLER" ]]; then
