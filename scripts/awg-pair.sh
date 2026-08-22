@@ -234,9 +234,10 @@ After=awg-quick@awg0.service
 
 [Service]
 ExecStartPost=
-ExecStartPost=/bin/sh -c 'i=0; while [ "$$i" -lt 40 ]; do /usr/bin/curl -fsS "http://$EXIT_IP:$AGENT_PORT/healthz" >/dev/null 2>&1 && exit 0; i=$$((i+1)); sleep 0.25; done; exit 1'
+ExecStartPost=/usr/bin/timeout 10 /bin/sh -c 'until /usr/bin/curl -fsS "http://$EXIT_IP:$AGENT_PORT/healthz" >/dev/null 2>&1; do sleep 0.25; done'
 UNIT
 systemctl daemon-reload
+systemd-analyze verify proxy-pool-agent.service >/dev/null
 systemctl restart proxy-pool-agent
 EOF
 }
