@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import time
+import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -22,17 +23,23 @@ _ALLOWED_SETTINGS = {
 }
 
 
+def _clean_text(value):
+    value = unicodedata.normalize("NFC", value)
+    value = "".join(ch for ch in value if ch.isprintable())
+    return value.strip()
+
+
 def load_settings_file(path=SETTINGS_PATH):
     """Load only known TYXE keys as a fallback when systemd EnvironmentFile is malformed.
 
-    A previous installer test produced an EnvironmentFile that systemd did not import.
-    We deliberately do not execute/source this file. NUL bytes are removed, only an
-    allowlist of keys is accepted, and existing process environment values win.
+    The file is never executed/sourced. NUL bytes and malformed UTF-8 fragments are
+    discarded, only an allowlist of keys is accepted, and existing process environment
+    values win. This also protects against partially erased multibyte terminal input.
     """
     loaded = []
     try:
         raw = open(path, "rb").read().replace(b"\x00", b"")
-        text = raw.decode("utf-8", errors="replace")
+        text = raw.decode("utf-8", errors="ignore")
     except OSError:
         return loaded
 
@@ -47,6 +54,7 @@ def load_settings_file(path=SETTINGS_PATH):
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
+        value = _clean_text(value)
         os.environ[key] = value
         loaded.append(key)
     return loaded
@@ -59,7 +67,7 @@ TELEMT_SERVICE = os.environ.get("PROXY_POOL_TELEMT_SERVICE", "telemt")
 TELEMT_CONFIG = os.environ.get("PROXY_POOL_TELEMT_CONFIG", "/etc/telemt/telemt.toml")
 TELEMT_BIN = os.environ.get("PROXY_POOL_TELEMT_BIN", "/bin/telemt")
 TOKEN = os.environ.get("PROXY_POOL_AGENT_TOKEN", "")
-NODE_NAME = os.environ.get("PROXY_POOL_NODE_NAME", os.uname().nodename)
+NODE_NAME = _clean_text(os.environ.get("PROXY_POOL_NODE_NAME", os.uname().nodename))
 LANG = os.environ.get("PROXY_POOL_LANG", "en")
 
 
