@@ -1,26 +1,39 @@
 # Changelog
 
-## v0.3.0 — in testing
+## Unreleased — v0.3.0 beta
 
-- Added automatic Unicode/IDN hostname conversion to ASCII/Punycode before Certbot/nginx use.
-- Kept Let’s Encrypt certificates outside rollback and added reuse/new/skip choices.
-- Added official Telemt provisioning on EXIT with install/update/use-existing/skip choices.
-- Added local `tyxe-telemt` manager for Telemt status, install/update, start/stop/restart and logs.
-- Extended node agent with Telemt version/config/service metadata, whitelisted service control and journal logs.
-- Extended central web panel with Telemt status, start/stop/restart and logs.
-- Enforced one EXIT in the controller during the stabilization milestone.
-- Extended rollback to remove the Telemt system user/group only when tyxe_pool recorded that it created them.
-- Rollback no longer sources `settings.env`; this fixes node names containing spaces such as `PL Hostoff` and makes partial-install rollback safer.
-- Agent fallback settings parsing now discards malformed UTF-8 fragments, NUL bytes and control characters instead of sourcing the file.
-- Node-agent systemd startup now waits for `/healthz` before reporting a successful start, avoiding the first-install readiness race on port 9100.
-- Added experimental ENTER↔EXIT AmneziaWG provisioning.
-- AWG allocator now reserves a separate collision-checked `/30` and `awgN` interface per EXIT on ENTER, with independent state/backup/rollback for future multi-node operation.
-- AWG address allocation checks current IPv4 addresses/routes, AmneziaWG/WireGuard configs and TYXE state on ENTER and the candidate EXIT; overlapping networks are skipped automatically.
-- Added fallback private address pools and optional `TYXE_AWG_POOLS` override.
-- AWG provisioning uses explicit `awg-quick@awg0.service` ordering for the EXIT Agent and SSH multiplexing for repeated remote calls.
-- Added guarded `tyxe-dataplane` provisioning: Telemt is backed up, restricted to the AWG address with PROXY protocol enabled, public link host is moved to ENTER, and host-level HAProxy forwards `:443` to the EXIT with `send-proxy-v2`.
-- Dataplane setup refuses to overwrite custom active `[[server.listeners]]`, validates the ENTER `:443` listener, keeps independent state/backups, and supports rollback without touching AWG/Agent/users/certificates.
-- Added GitHub Actions Bash/Python/systemd syntax checks and a private-key-material guard.
-- MTProxyL/Zapret2 remains intentionally planned for ENTER, not EXIT.
+### Added
+- EXIT Telemt lifecycle integration and central status/control.
+- Private Agent migration over AmneziaWG.
+- Collision-aware `/30` AWG pair allocator and per-pair rollback.
+- Host-level HAProxy dataplane with PROXY protocol v2 to tunnel-bound Telemt.
+- `tyxe-dataplane` backup/status/rollback workflow.
+- Persistent role-aware `sudo tyxe` main menu.
+- Post-install management component deployment (`tyxe-awg`, `tyxe-dataplane`, `tyxe-mtproxyl`, fallback anti-DPI helper).
+- Official upstream MTProxyL anti-DPI bridge for ENTER.
+  - downloads/updates current `Liafanx/MTProxyL` upstream when selected;
+  - requires `Reanimator` + `tools_only=true` before applying any fix;
+  - exposes current upstream Zapret2, Smart By-MEKO and wscale diagnostics;
+  - keeps TYXE ownership of HAProxy/AWG/EXIT Telemt;
+  - retains the built-in Zapret2 implementation only as an emergency fallback.
 
-## v0.2.1
+### Fixed during real-VPS validation
+- Interactive AWG input variable shadowing.
+- Agent systemd AWG dependency uses the explicit `.service` unit name.
+- SSH multiplexing avoids repeated password prompts within one provisioning run.
+- `set -e` false failure when an optional SSH key is empty.
+- Remote dataplane backup directory creation before copying Telemt config.
+
+### Validated on real VPSes
+- Telemt 3.4.25 on EXIT.
+- ENTER `10.10.10.2/30` ↔ EXIT `10.10.10.1/30` AWG tunnel.
+- Agent reachable only through the tunnel path.
+- Controller keeps the EXIT node `up` across polling cycles.
+- HAProxy `0.0.0.0:443` → `10.10.10.1:443` with `send-proxy-v2`.
+- Telemt tunnel bind and `proxy_protocol=true`.
+- Server-side dataplane postcheck passes.
+
+### Pending live validation
+- Actual Telegram client connection through the upstream MTProxyL anti-DPI layer on ENTER.
+- Shared 443 selfsteal/classifier.
+- Multi-EXIT balancing/failover.
