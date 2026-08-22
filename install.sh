@@ -61,11 +61,19 @@ pick_installer(){
   return 1
 }
 
+run_postinstall(){
+  local root="$1" post="$1/scripts/postinstall.sh"
+  [[ -f "$post" ]] || return 0
+  env TYXE_POOL_LANG="$TYXE_POOL_LANG" TYXE_POOL_REPO="${REPO:-}" TYXE_POOL_REF="$REF" bash "$post"
+}
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 if [[ -n "$SCRIPT_DIR" ]]; then
   LOCAL_INSTALLER="$(pick_installer "$SCRIPT_DIR" || true)"
   if [[ -n "$LOCAL_INSTALLER" ]]; then
-    exec env TYXE_POOL_LANG="$TYXE_POOL_LANG" bash "$LOCAL_INSTALLER"
+    env TYXE_POOL_LANG="$TYXE_POOL_LANG" bash "$LOCAL_INSTALLER"
+    run_postinstall "$SCRIPT_DIR"
+    exit 0
   fi
 fi
 
@@ -87,4 +95,5 @@ ROOT_DIR="$(find "$TMP" -mindepth 1 -maxdepth 1 -type d | head -n1)"
 REMOTE_INSTALLER="$(pick_installer "$ROOT_DIR" || true)"
 [[ -n "$REMOTE_INSTALLER" ]] || { red "$(msg badarchive)"; exit 1; }
 green "$(msg start)"
-exec env TYXE_POOL_LANG="$TYXE_POOL_LANG" TYXE_POOL_REPO="$REPO" TYXE_POOL_REF="$REF" bash "$REMOTE_INSTALLER"
+env TYXE_POOL_LANG="$TYXE_POOL_LANG" TYXE_POOL_REPO="$REPO" TYXE_POOL_REF="$REF" bash "$REMOTE_INSTALLER"
+run_postinstall "$ROOT_DIR"
