@@ -5,7 +5,7 @@ Self-hosted controller for a Telemt ENTER/EXIT topology.
 Current stabilization topology:
 
 ```text
-Client -> RU ENTER/controller -> (transport comes next) -> PL EXIT/Telemt
+Client -> RU ENTER/controller -> AmneziaWG -> PL EXIT/Telemt
 ```
 
 During stabilization tyxe_pool intentionally allows **one ENTER and one EXIT**. Multi-EXIT balancing will be enabled only after the base chain is proven stable.
@@ -37,13 +37,15 @@ Implemented in this milestone:
 - Telemt installed/running/version/config status in the central panel;
 - Telemt start/stop/restart and journal logs from the central panel through the node agent;
 - rollback tracking for Telemt files/service plus the `telemt` system user/group when tyxe_pool created them;
+- experimental `tyxe-awg` pair manager for the official ENTER↔EXIT AmneziaWG layout;
+- AWG backups on both VPSes, randomized keys/PSK/obfuscation parameters, restricted EXIT UDP firewall rule, tunnel health checks and Agent migration to the tunnel IP;
 - GitHub Actions syntax checks for Bash/Python and a guard against committed private key material.
 
 Still intentionally pending:
 
+- real-VPS validation of the new AWG pair manager;
+- Telemt `proxy_protocol`/tunnel bind and HAProxy dataplane;
 - MTProxyL/Zapret2/Smart fixes on ENTER;
-- AmneziaWG transport provisioning;
-- official Telemt double-hop wiring / HAProxy dataplane;
 - final shared-port `443` selfsteal/classifier;
 - synchronized Telemt users/secrets;
 - Globalping and end-to-end Telegram health checks;
@@ -97,6 +99,46 @@ sudo tyxe-telemt
 ```
 
 The central controller can query Telemt status and perform only the whitelisted service actions `start`, `stop`, and `restart` through the authenticated node agent. It can also read recent Telemt journal logs.
+
+## ENTER ↔ EXIT AmneziaWG beta
+
+The first AWG provisioning pass intentionally follows the official Telemt double-hop addressing:
+
+```text
+ENTER: 10.10.10.2
+EXIT:  10.10.10.1
+EXIT AWG endpoint: 8443/udp
+EXIT Agent: 10.10.10.1:9100
+```
+
+For the current test, both VPSes should be Ubuntu 22.04/24.04 and ENTER must be able to SSH to EXIT as `root`. Install the manager on ENTER:
+
+```bash
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/TyXeD0/tyxe_pool/feature/v0.3.0-telemt/scripts/awg-pair.sh \
+  -o /usr/local/sbin/tyxe-awg
+sudo chmod 755 /usr/local/sbin/tyxe-awg
+```
+
+Create the pair:
+
+```bash
+sudo tyxe-awg setup
+```
+
+Inspect it:
+
+```bash
+sudo tyxe-awg status
+```
+
+Rollback only the AWG pair and restore the backed-up EXIT Agent settings:
+
+```bash
+sudo tyxe-awg rollback
+```
+
+The manager does not full-tunnel either VPS and does not change SSH routing. Only the EXIT tunnel `/32` is routed through AWG. If UFW is active, the AWG UDP port is allowed only from the public IPv4 address of ENTER. The Agent is then rebound from localhost to the EXIT tunnel IP and made dependent on `awg-quick@awg0.service`.
 
 ## Node management
 
