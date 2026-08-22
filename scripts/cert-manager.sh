@@ -9,6 +9,7 @@ CERT_WORK=/var/lib/tyxe-pool-persistent/acme-work
 CERT_LOGS=/var/lib/tyxe-pool-persistent/acme-logs
 RENEW_SERVICE=/etc/systemd/system/tyxe-cert-renew.service
 RENEW_TIMER=/etc/systemd/system/tyxe-cert-renew.timer
+ACME_HELPER=/etc/nginx/conf.d/tyxe-acme-http.conf
 
 red(){ printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green(){ printf '\033[32m%s\033[0m\n' "$*"; }
@@ -51,41 +52,97 @@ cert_dir(){
 
 public_ipv4(){ ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([^ ]*\).*/\1/p' | head -n1; }
 
+public_dns_ipv4(){
+  local d="$1" r ans
+  if command -v dig >/dev/null 2>&1; then
+    for r in 1.1.1.1 8.8.8.8; do
+      ans=$(dig +time=2 +tries=1 +short A "$d" "@$r" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/{print; exit}')
+      [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
+    done
+  fi
+  ans=$(getent ahostsv4 "$d" 2>/dev/null | awk 'NR==1{print $1}')
+  [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
+  return 1
+}
+
+challenge_ok(){
+  local d="$1" token path got
+  install -d -m 755 "$SITE_ROOT/.well-known/acme-challenge"
+  token="tyxe-preflight-$$-$(date +%s%N)"
+  path="$SITE_ROOT/.well-known/acme-challenge/$token"
+  printf '%s' "$token" > "$path"
+  got=$(curl -fsS --max-time 5 -H "Host: $d" "http://127.0.0.1/.well-known/acme-challenge/$token" 2>/dev/null || true)
+  rm -f "$path"
+  [[ "$got" == "$token" ]]
+}
+
+ensure_acme_http_server(){
+  local d="$1" backup=''
+  challenge_ok "$d" && return 0
+  yellow "Для $d нет рабочего ACME HTTP-01 location. TYXE добавит отдельный nginx helper только на TCP/80."
+  [[ -e $ACME_HELPER ]] && { backup="${ACME_HELPER}.bak.$(date +%s%N)"; cp -a "$ACME_HELPER" "$backup"; }
+  {
+    [[ -s $ACME_HELPER ]] && cat "$ACME_HELPER"
+    cat <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $d;
+    root $SITE_ROOT;
+    location ^~ /.well-known/acme-challenge/ {
+        try_files \$uri =404;
+    }
+    location / { return 404; }
+}
+EOF
+  } > "${ACME_HELPER}.tmp"
+  mv "${ACME_HELPER}.tmp" "$ACME_HELPER"
+  if ! nginx -t; then
+    [[ -n $backup ]] && cp -a "$backup" "$ACME_HELPER" || rm -f "$ACME_HELPER"
+    rm -f "$backup"
+    red 'nginx -t не прошёл после добавления ACME helper.'
+    return 1
+  fi
+  systemctl reload nginx
+  if ! challenge_ok "$d"; then
+    [[ -n $backup ]] && cp -a "$backup" "$ACME_HELPER" || rm -f "$ACME_HELPER"
+    rm -f "$backup"
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+    red "Даже после ACME helper nginx не отдаёт challenge для $d."
+    red "Проверьте: nginx -T | grep -n -A8 -B2 'server_name $d'"
+    return 1
+  fi
+  rm -f "$backup"
+  green "ACME HTTP-01 helper для $d готов и сохранён для будущего продления."
+}
+
 preflight_http(){
-  local d="$1" resolved pub token path got
+  local d="$1" resolved pub
   command -v certbot >/dev/null 2>&1 || { red 'certbot не установлен.'; return 1; }
   command -v nginx >/dev/null 2>&1 || { red 'nginx не установлен.'; return 1; }
   systemctl is-active --quiet nginx || { red 'nginx не active.'; return 1; }
   ss -ltnH 'sport = :80' 2>/dev/null | grep -q . || { red 'На ENTER никто не слушает TCP/80.'; return 1; }
 
-  resolved=$(getent ahostsv4 "$d" 2>/dev/null | awk 'NR==1{print $1}')
+  resolved=$(public_dns_ipv4 "$d" || true)
   pub=$(public_ipv4)
-  [[ -n $resolved ]] || { red "DNS A для $d не резолвится."; return 1; }
+  [[ -n $resolved ]] || { red "Публичный DNS A для $d не резолвится."; return 1; }
   if [[ -n $pub && $resolved != "$pub" ]]; then
-    yellow "DNS $d -> $resolved, публичный IPv4 ENTER -> $pub"
-    yesno 'Продолжить выпуск сертификата несмотря на несовпадение?' || return 1
+    red "Публичный DNS $d -> $resolved, а IPv4 ENTER -> $pub"
+    red 'Для HTTP-01 A-запись должна указывать на ENTER. Локальная запись /etc/hosts здесь не учитывается.'
+    return 1
   fi
 
-  install -d -m 755 "$SITE_ROOT/.well-known/acme-challenge"
-  token="tyxe-preflight-$$-$(date +%s)"
-  path="$SITE_ROOT/.well-known/acme-challenge/$token"
-  printf '%s' "$token" > "$path"
-  trap 'rm -f "${path:-}"' RETURN
-  got=$(curl -fsS --max-time 5 -H "Host: $d" "http://127.0.0.1/.well-known/acme-challenge/$token" 2>/dev/null || true)
-  [[ "$got" == "$token" ]] || {
-    red "nginx не отдаёт ACME webroot для $d через TCP/80."
-    red "Проверьте server_name и location /.well-known/acme-challenge/."
-    return 1
-  }
+  ensure_acme_http_server "$d" || return 1
   green "DNS/HTTP-01 preflight: $d -> $resolved, webroot OK"
 }
 
 install_renew_timer(){
+  install -d -m 700 "$CERT_STORE" "$CERT_WORK" "$CERT_LOGS"
   cat > "$RENEW_SERVICE" <<EOF
 [Unit]
 Description=TYXE Let's Encrypt renewal
 After=network-online.target nginx.service
-Wants=network-online.target
+Wants=network-online.target nginx.service
 
 [Service]
 Type=oneshot
@@ -115,6 +172,7 @@ ensure_cert(){
   if existing=$(cert_dir "$DOMAIN"); then
     green "Сертификат уже существует: $existing"
     openssl x509 -in "$existing/fullchain.pem" -noout -subject -issuer -enddate 2>/dev/null || true
+    ensure_acme_http_server "$DOMAIN" || true
     install_renew_timer
     return 0
   fi
@@ -151,10 +209,19 @@ status(){
   printf '\nRenew timer: '
   systemctl is-enabled tyxe-cert-renew.timer 2>/dev/null || true
   systemctl list-timers tyxe-cert-renew.timer --no-pager 2>/dev/null || true
+  printf 'ACME HTTP helper: '
+  [[ -s $ACME_HELPER ]] && echo "$ACME_HELPER" || echo 'not needed/not created'
+}
+
+renew_test(){
+  cyan 'TYXE renewal dry-run'
+  install_renew_timer
+  certbot renew --dry-run --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS"
 }
 
 case "${1:-status}" in
   ensure|issue) shift; ensure_cert "${1:-proxy}" ;;
   status) status ;;
-  *) echo 'Usage: tyxe-cert [status|ensure proxy|ensure panel]' >&2; exit 2 ;;
+  renew-test) renew_test ;;
+  *) echo 'Usage: tyxe-cert [status|ensure proxy|ensure panel|renew-test]' >&2; exit 2 ;;
 esac
