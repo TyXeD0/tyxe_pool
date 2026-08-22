@@ -1,114 +1,122 @@
 # tyxe_pool
 
-Self-hosted controller for a Telemt enter/exit topology.
+Self-hosted controller for a Telemt ENTER/EXIT topology.
 
-Current development topology:
+Current stabilization topology:
 
 ```text
-Client -> RU ENTER -> selfsteal/classifier -> transport -> PL EXIT -> Telemt
+Client -> RU ENTER/controller -> (transport comes next) -> PL EXIT/Telemt
 ```
 
-During the stabilization phase tyxe_pool intentionally uses **one ENTER and one EXIT**. Multiple EXIT nodes will be enabled only after the base chain is proven stable.
+During stabilization tyxe_pool intentionally allows **one ENTER and one EXIT**. Multi-EXIT balancing will be enabled only after the base chain is proven stable.
 
-## Current version
+## Current development version
 
-`v0.2.1` — public curl bootstrap + authenticated web panel.
+`v0.3.0` (feature branch while being tested)
 
-Implemented:
+Implemented in this milestone:
 
 - public GitHub bootstrap via `curl`, no GitHub token required;
-- Russian/English language selection at the start;
-- selected language is applied to the web panel;
-- numeric menu choices and `y/n` confirmations;
+- Russian/English language selection at installer start;
+- selected language is used by the web panel;
+- numeric choices and `y/n` confirmations;
 - explanatory installer steps;
 - ENTER/controller and EXIT/node-agent roles;
-- persistent rollback manifest across upgrades;
-- Let’s Encrypt certificates survive rollback/uninstall and can be reused;
-- controller admin username/password setup during installation;
-- PBKDF2-SHA256 password storage (no plaintext admin password on disk);
-- signed HttpOnly panel sessions + SameSite cookies;
-- CSRF protection for state-changing web API calls;
-- controller remains bound to `127.0.0.1`;
-- optional Internet-facing panel through nginx HTTPS reverse proxy;
-- separate panel hostname supported (recommended: `panel.example.com`);
-- per-IP login throttling in nginx for public mode;
+- automatic IDN/Unicode hostname conversion to ASCII/Punycode before DNS/TLS/nginx/Certbot use;
+- persistent Let’s Encrypt certificates that survive rollback/uninstall and can be reused;
+- public HTTPS panel option with administrator username/password;
+- PBKDF2-SHA256 password storage, signed HttpOnly sessions and CSRF protection;
+- controller remains bound to `127.0.0.1`; nginx publishes the panel when requested;
+- separate proxy/selfsteal and panel hostnames;
+- basic HTTPS decoy/selfsteal website (final shared-port classifier is a later milestone);
 - node-agent bearer token;
-- add/remove EXIT node from web UI and `tyxe-pool-node` CLI;
-- controller displays agent/Telemt service status, load, RAM and uptime.
+- one-EXIT stabilization guard in the controller;
+- node status, load, RAM and uptime in the central panel;
+- official Telemt installation/update on EXIT;
+- local `tyxe-telemt` management menu on EXIT;
+- Telemt installed/running/version/config status in the central panel;
+- Telemt start/stop/restart and journal logs from the central panel through the node agent;
+- rollback tracking for Telemt files/service plus the `telemt` system user/group when tyxe_pool created them;
+- GitHub Actions syntax checks for Bash/Python and a guard against committed private key material.
 
-Not production-ready yet:
+Still intentionally pending:
 
-- MTProxyL/Telemt provisioning;
-- final shared-port 443 selfsteal/classifier;
+- MTProxyL/Zapret2/Smart fixes on ENTER;
 - AmneziaWG transport provisioning;
+- official Telemt double-hop wiring / HAProxy dataplane;
+- final shared-port `443` selfsteal/classifier;
 - synchronized Telemt users/secrets;
-- Globalping / end-to-end Telegram checks;
-- HAProxy exit selection/failover;
-- multiple EXIT nodes.
+- Globalping and end-to-end Telegram health checks;
+- multiple EXIT nodes and load balancing/failover.
 
-## Install from public GitHub with curl
+## Install from public GitHub
 
-Replace `OWNER` with the GitHub account that owns `tyxe_pool`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/tyxe_pool/main/install.sh \
-  | sudo bash -s -- --repo OWNER/tyxe_pool
-```
-
-Install a tagged version instead of `main`:
+Stable `main`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/tyxe_pool/v0.2.1/install.sh \
-  | sudo bash -s -- --repo OWNER/tyxe_pool --ref v0.2.1
+curl -fsSL https://raw.githubusercontent.com/TyXeD0/tyxe_pool/main/install.sh \
+  | sudo bash -s -- --repo TyXeD0/tyxe_pool
 ```
 
-The bootstrap downloads the rest of the public repository into a temporary directory and starts the full interactive installer. The temporary checkout is removed automatically.
+Test the current v0.3 feature branch:
 
-## Panel modes
+```bash
+curl -fsSL https://raw.githubusercontent.com/TyXeD0/tyxe_pool/feature/v0.3.0-telemt/install.sh \
+  | sudo bash -s -- \
+      --repo TyXeD0/tyxe_pool \
+      --ref feature/v0.3.0-telemt
+```
 
-The ENTER installer offers:
+The bootstrap downloads the repository to a temporary directory, runs the interactive installer, and removes the temporary checkout automatically.
+
+## Domain layout
+
+Recommended:
 
 ```text
-1) Localhost only + SSH tunnel
-2) Public HTTPS panel
+example.com       -> proxy/selfsteal on ENTER
+panel.example.com -> authenticated TYXE Pool panel on ENTER
 ```
 
-The controller process always listens on `127.0.0.1`. In public mode nginx exposes the configured panel hostname over HTTPS and reverse-proxies to the local controller.
+IDN domains may be entered in Unicode form. The installer shows and uses their Punycode form for Certbot/nginx/DNS-facing configuration.
 
-Recommended domain layout:
+## EXIT / Telemt
+
+During EXIT installation the wizard offers:
 
 ```text
-example.com       -> proxy / selfsteal hostname
-panel.example.com -> TYXE Pool panel
+1) Install/update Telemt now
+2) Use existing Telemt
+3) Skip and configure later
 ```
 
-The installer asks for an administrator username and password twice. The password itself is never written to disk; only a PBKDF2-SHA256 hash is stored in `/etc/proxy-pool/settings.env`.
+Local management afterwards:
+
+```bash
+sudo tyxe-telemt
+```
+
+The central controller can query Telemt status and perform only the whitelisted service actions `start`, `stop`, and `restart` through the authenticated node agent. It can also read recent Telemt journal logs.
 
 ## Node management
+
+On ENTER:
 
 ```bash
 sudo tyxe-pool-node
 ```
 
-or:
-
-```bash
-sudo tyxe-pool-node list
-sudo tyxe-pool-node add
-sudo tyxe-pool-node remove
-```
+or use the web panel. During this stabilization milestone the controller accepts only one EXIT node.
 
 ## Certificates
 
-Certificates are persistent and are intentionally outside the rollback lifecycle. When a certificate already exists, the installer offers to reuse it rather than issue another one.
-
-Primary persistent store:
+Certificates intentionally live outside the rollback lifecycle:
 
 ```text
 /var/lib/tyxe-pool-persistent/letsencrypt/
 ```
 
-Existing system Certbot certificates under `/etc/letsencrypt/` can also be reused.
+Existing system Certbot certificates under `/etc/letsencrypt/` can also be reused. If a matching certificate exists, the installer asks whether to reuse it, issue a new one, or skip TLS for that hostname.
 
 ## Rollback / uninstall
 
@@ -124,8 +132,8 @@ Full rollback of tyxe_pool-managed changes:
 sudo /usr/local/sbin/proxy-pool-rollback --purge-state
 ```
 
-Certificates are preserved.
+TLS certificates are preserved.
 
 ## Security rule
 
-Never commit real credentials, including node tokens, Telemt user secrets, API tokens, SSH private keys, TLS private keys or generated settings files.
+Never commit real node tokens, Telemt user secrets, API tokens, SSH private keys, TLS private keys, generated `.env` files, or generated server settings.
