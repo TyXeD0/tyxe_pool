@@ -1,19 +1,18 @@
 [Unit]
-Description=Proxy Pool Node Agent
+Description=TYXE Pool Node Agent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-EnvironmentFile=-/etc/proxy-pool/agent.env
+EnvironmentFile=-/etc/proxy-pool/settings.env
 ExecStart=/usr/bin/python3 /opt/proxy-pool/agent/agent.py
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
-ReadOnlyPaths=/etc
 
 [Install]
 WantedBy=multi-user.target
