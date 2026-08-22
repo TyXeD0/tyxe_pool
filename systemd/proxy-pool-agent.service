@@ -8,6 +8,8 @@ Type=simple
 User=root
 EnvironmentFile=-/etc/proxy-pool/settings.env
 ExecStart=/usr/bin/python3 /opt/proxy-pool/agent/agent.py
+ExecStartPost=/bin/sh -c 'i=0; while [ "$i" -lt 40 ]; do /usr/bin/curl -fsS "http://127.0.0.1:${PROXY_POOL_AGENT_PORT:-9100}/healthz" >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 0.25; done; exit 1'
+TimeoutStartSec=15
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
