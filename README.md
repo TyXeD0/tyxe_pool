@@ -8,7 +8,7 @@ Current stabilization topology:
 Client -> RU ENTER/controller -> AmneziaWG -> PL EXIT/Telemt
 ```
 
-During stabilization tyxe_pool intentionally allows **one ENTER and one EXIT**. Multi-EXIT balancing will be enabled only after the base chain is proven stable.
+During stabilization tyxe_pool intentionally allows **one ENTER and one EXIT** in the controller. Multi-EXIT balancing will be enabled only after the base chain is proven stable, but the AWG allocator is already designed not to lock us into a single tunnel.
 
 ## Current development version
 
@@ -37,7 +37,9 @@ Implemented in this milestone:
 - Telemt installed/running/version/config status in the central panel;
 - Telemt start/stop/restart and journal logs from the central panel through the node agent;
 - rollback tracking for Telemt files/service plus the `telemt` system user/group when tyxe_pool created them;
-- experimental `tyxe-awg` pair manager for the official ENTER↔EXIT AmneziaWG layout;
+- experimental `tyxe-awg` pair manager for ENTER↔EXIT AmneziaWG;
+- collision-aware `/30` allocation for future multiple EXIT nodes;
+- separate `awgN` interface/state/backup per EXIT on ENTER;
 - AWG backups on both VPSes, randomized keys/PSK/obfuscation parameters, restricted EXIT UDP firewall rule, tunnel health checks and Agent migration to the tunnel IP;
 - GitHub Actions syntax checks for Bash/Python and a guard against committed private key material.
 
@@ -49,7 +51,7 @@ Still intentionally pending:
 - final shared-port `443` selfsteal/classifier;
 - synchronized Telemt users/secrets;
 - Globalping and end-to-end Telegram health checks;
-- multiple EXIT nodes and load balancing/failover.
+- enabling multiple EXIT nodes in the controller and load balancing/failover.
 
 ## Install from public GitHub
 
@@ -102,14 +104,35 @@ The central controller can query Telemt status and perform only the whitelisted 
 
 ## ENTER ↔ EXIT AmneziaWG beta
 
-The first AWG provisioning pass intentionally follows the official Telemt double-hop addressing:
+The allocator uses a separate `/30` point-to-point network for every EXIT. The first free pair keeps the official Telemt example convention where EXIT gets the first usable address and ENTER the second usable address:
 
 ```text
-ENTER: 10.10.10.2
-EXIT:  10.10.10.1
-EXIT AWG endpoint: 8443/udp
-EXIT Agent: 10.10.10.1:9100
+PL1: awg0 on ENTER, 10.10.10.0/30  -> EXIT 10.10.10.1, ENTER 10.10.10.2
+PL2: awg1 on ENTER, 10.10.10.4/30  -> EXIT 10.10.10.5, ENTER 10.10.10.6
+PL3: awg2 on ENTER, 10.10.10.8/30  -> EXIT 10.10.10.9, ENTER 10.10.10.10
+...
 ```
+
+On each separate EXIT VPS the local interface may still be named `awg0`; only ENTER needs `awg0`, `awg1`, `awg2`, ... because all tunnels coexist there.
+
+Before allocating a subnet, TYXE compares the candidate against IPv4 addresses and routes, existing AmneziaWG/WireGuard configs, and TYXE AWG state on ENTER, plus addresses/routes/configs on the new EXIT. Any overlapping `/30` is skipped. Default pools are tried in this order:
+
+```text
+10.10.10.0/24
+10.254.0.0/16
+172.31.240.0/20
+192.168.250.0/24
+```
+
+A custom pool can be supplied when needed:
+
+```bash
+TYXE_AWG_POOLS=10.200.0.0/16 sudo -E tyxe-awg setup
+```
+
+The setup also serializes allocation with a lock so two simultaneous provisioning runs cannot reserve the same network.
+
+The default EXIT AWG UDP endpoint remains `8443/udp` (the same port may be reused on different EXIT VPSes because they have different public IPs). If UFW is active, TYXE adds the rule only for the public IPv4 of ENTER when no pre-existing rule is present.
 
 For the current test, both VPSes should be Ubuntu 22.04/24.04 and ENTER must be able to SSH to EXIT as `root`. Install the manager on ENTER:
 
@@ -120,25 +143,31 @@ sudo curl -fsSL \
 sudo chmod 755 /usr/local/sbin/tyxe-awg
 ```
 
-Create the pair:
+Create another pair:
 
 ```bash
 sudo tyxe-awg setup
 ```
 
-Inspect it:
+List allocated pairs:
 
 ```bash
-sudo tyxe-awg status
+sudo tyxe-awg list
 ```
 
-Rollback only the AWG pair and restore the backed-up EXIT Agent settings:
+Inspect a pair:
 
 ```bash
-sudo tyxe-awg rollback
+sudo tyxe-awg status <node-id>
 ```
 
-The manager does not install a default route through AWG and does not change the public SSH route. The tunnel interfaces use the official `10.10.10.0/24` addressing while each peer's `AllowedIPs` is restricted to the opposite tunnel IP. If UFW is active, the AWG UDP port is allowed only from the public IPv4 address of ENTER when TYXE adds the rule. The Agent is then rebound from localhost to the EXIT tunnel IP and made dependent on `awg-quick@awg0.service`.
+Rollback only one pair:
+
+```bash
+sudo tyxe-awg rollback <node-id>
+```
+
+The manager does not install a default route through AWG and does not change the public SSH route. Each pair has its own state and backup, so removing one EXIT is not supposed to overwrite or stop other AWG pairs. The Agent on each EXIT is rebound from localhost to that EXIT's tunnel IP and made dependent on its local `awg-quick@awg0.service`.
 
 ## Node management
 
@@ -148,7 +177,7 @@ On ENTER:
 sudo tyxe-pool-node
 ```
 
-or use the web panel. During this stabilization milestone the controller accepts only one EXIT node.
+or use the web panel. During this stabilization milestone the controller still accepts only one EXIT node; that guard will be removed only after the single ENTER↔EXIT dataplane is proven stable.
 
 ## Certificates
 
