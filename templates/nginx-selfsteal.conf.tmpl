@@ -1,0 +1,11 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__;
+    root /var/www/proxy-pool-selfsteal;
+    index index.html;
+    location /.well-known/acme-challenge/ { allow all; }
+    location / { try_files $uri $uri/ /index.html; }
+}
+
+# HTTPS virtual host is added after certificate issuance by the installer.

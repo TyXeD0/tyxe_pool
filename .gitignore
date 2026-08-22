@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local secrets / runtime state
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Archives / build output
+*.tar.gz
+*.zip
+dist/
+build/

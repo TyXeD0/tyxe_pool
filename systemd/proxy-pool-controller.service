@@ -1,0 +1,19 @@
+[Unit]
+Description=Proxy Pool Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/proxy-pool/controller.env
+ExecStart=/usr/bin/python3 /opt/proxy-pool/controller/controller.py
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/etc/proxy-pool /var/lib/proxy-pool
+
+[Install]
+WantedBy=multi-user.target

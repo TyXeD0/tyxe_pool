@@ -1,0 +1,25 @@
+global
+    log stdout format raw local0
+    maxconn 10000
+
+defaults
+    log global
+    mode tcp
+    option tcplog
+    option clitcpka
+    option srvtcpka
+    timeout connect 5s
+    timeout client 2h
+    timeout server 2h
+    timeout check 5s
+
+frontend tcp_in_443
+    bind *:443
+    default_backend telemt_nodes
+
+backend telemt_nodes
+    balance leastconn
+    option tcp-check
+    # Managed by Proxy Pool. Addresses below are placeholders until nodes are configured.
+    # server pl1 10.10.1.1:443 check inter 5s rise 2 fall 3 send-proxy-v2
+    # server pl2 10.10.2.1:443 check inter 5s rise 2 fall 3 send-proxy-v2
