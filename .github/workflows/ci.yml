@@ -23,7 +23,11 @@ jobs:
       - name: Python syntax
         run: |
           set -euo pipefail
-          python3 -m py_compile agent/*.py controller/*.py
+          python3 -m py_compile agent/*.py controller/*.py tests/*.py
+      - name: Controller regression tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v
       - name: systemd unit syntax
         run: |
           set -euo pipefail
