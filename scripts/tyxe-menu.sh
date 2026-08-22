@@ -21,17 +21,9 @@ LANG_CODE=$(getenv_file "$SETTINGS" TYXE_POOL_LANG)
 ROLE=$(getenv_file "$SETTINGS" PROXY_POOL_ROLE)
 
 if [[ $LANG_CODE == ru ]]; then
-  TITLE='TYXE Pool — главное меню'
-  BAD_CHOICE='Неверный выбор.'
-  NOT_INSTALLED='компонент ещё не установлен'
-  PRESS_ENTER='Enter для продолжения...'
-  STATUS='Статус'
+  TITLE='TYXE Pool — главное меню'; BAD_CHOICE='Неверный выбор.'; NOT_INSTALLED='компонент ещё не установлен'; PRESS_ENTER='Enter для продолжения...'; STATUS='Статус'
 else
-  TITLE='TYXE Pool — main menu'
-  BAD_CHOICE='Invalid choice.'
-  NOT_INSTALLED='component is not installed yet'
-  PRESS_ENTER='Press Enter to continue...'
-  STATUS='Status'
+  TITLE='TYXE Pool — main menu'; BAD_CHOICE='Invalid choice.'; NOT_INSTALLED='component is not installed yet'; PRESS_ENTER='Press Enter to continue...'; STATUS='Status'
 fi
 
 enter_status(){
@@ -45,6 +37,7 @@ enter_status(){
     printf '\nAnti-DPI / MTProxyL:\n'
     if command -v mtproxyl >/dev/null 2>&1; then mtproxyl version 2>/dev/null || true; mtproxyl mode --json 2>/dev/null || true; else echo 'not installed'; fi
   fi
+  if command -v tyxe-shared443 >/dev/null 2>&1; then printf '\nShared 443:\n'; tyxe-shared443 status || true; fi
 }
 
 agent_status(){
@@ -59,58 +52,34 @@ awg_menu(){
   while :; do
     cyan 'AmneziaWG'
     if [[ $LANG_CODE == ru ]]; then
-      cat <<'MENU'
-1) Список пар
-2) Статус пары
-3) Добавить EXIT / создать пару
-4) Откатить пару
-5) Назад
-MENU
+      printf '%s\n' '1) Список пар' '2) Статус пары' '3) Добавить EXIT / создать пару' '4) Откатить пару' '5) Назад'
     else
-      cat <<'MENU'
-1) List pairs
-2) Pair status
-3) Add EXIT / create pair
-4) Roll back pair
-5) Back
-MENU
+      printf '%s\n' '1) List pairs' '2) Pair status' '3) Add EXIT / create pair' '4) Roll back pair' '5) Back'
     fi
     local c; c=$(choice '> ' 1 5)
-    case "$c" in
-      1) run_or_warn tyxe-awg list; pause;;
-      2) run_or_warn tyxe-awg status; pause;;
-      3) run_or_warn tyxe-awg setup; pause;;
-      4) run_or_warn tyxe-awg rollback; pause;;
-      5) return 0;;
-    esac
+    case "$c" in 1) run_or_warn tyxe-awg list; pause;; 2) run_or_warn tyxe-awg status; pause;; 3) run_or_warn tyxe-awg setup; pause;; 4) run_or_warn tyxe-awg rollback; pause;; 5) return 0;; esac
   done
 }
 
 dataplane_menu(){
   while :; do
     cyan 'Dataplane'
+    if [[ $LANG_CODE == ru ]]; then printf '%s\n' '1) Статус' '2) Настроить HAProxy ↔ Telemt' '3) Откатить dataplane' '4) Назад'; else printf '%s\n' '1) Status' '2) Configure HAProxy ↔ Telemt' '3) Roll back dataplane' '4) Back'; fi
+    local c; c=$(choice '> ' 1 4)
+    case "$c" in 1) run_or_warn tyxe-dataplane status; pause;; 2) run_or_warn tyxe-dataplane setup; pause;; 3) run_or_warn tyxe-dataplane rollback; pause;; 4) return 0;; esac
+  done
+}
+
+shared443_menu(){
+  while :; do
+    cyan 'Shared TCP/443 / selfsteal'
     if [[ $LANG_CODE == ru ]]; then
-      cat <<'MENU'
-1) Статус
-2) Настроить HAProxy ↔ Telemt
-3) Откатить dataplane
-4) Назад
-MENU
+      printf '%s\n' '1) Статус classifier' '2) Включить SNI classifier + HTTPS-заглушку' '3) Откатить classifier' '4) Назад'
     else
-      cat <<'MENU'
-1) Status
-2) Configure HAProxy ↔ Telemt
-3) Roll back dataplane
-4) Back
-MENU
+      printf '%s\n' '1) Classifier status' '2) Enable SNI classifier + HTTPS decoy' '3) Roll back classifier' '4) Back'
     fi
     local c; c=$(choice '> ' 1 4)
-    case "$c" in
-      1) run_or_warn tyxe-dataplane status; pause;;
-      2) run_or_warn tyxe-dataplane setup; pause;;
-      3) run_or_warn tyxe-dataplane rollback; pause;;
-      4) return 0;;
-    esac
+    case "$c" in 1) run_or_warn tyxe-shared443 status; pause;; 2) run_or_warn tyxe-shared443 setup; pause;; 3) run_or_warn tyxe-shared443 rollback; pause;; 4) return 0;; esac
   done
 }
 
@@ -119,35 +88,36 @@ enter_menu(){
     clear 2>/dev/null || true
     cyan "$TITLE"
     if [[ $LANG_CODE == ru ]]; then
-      cat <<'MENU'
-1) Статус ENTER / цепочки
-2) EXIT-ноды / Controller
-3) AmneziaWG пары
-4) Dataplane: HAProxy ↔ Telemt
-5) Anti-DPI / официальный MTProxyL
-6) Аварийный встроенный Zapret2 fallback
-7) Выход
-MENU
+      printf '%s\n' \
+        '1) Статус ENTER / цепочки' \
+        '2) EXIT-ноды / Controller' \
+        '3) AmneziaWG пары' \
+        '4) Dataplane: HAProxy ↔ Telemt' \
+        '5) Anti-DPI / официальный MTProxyL' \
+        '6) Shared TCP/443 / selfsteal classifier' \
+        '7) Аварийный встроенный Zapret2 fallback' \
+        '8) Выход'
     else
-      cat <<'MENU'
-1) ENTER / chain status
-2) EXIT nodes / Controller
-3) AmneziaWG pairs
-4) Dataplane: HAProxy ↔ Telemt
-5) Anti-DPI / official MTProxyL
-6) Emergency built-in Zapret2 fallback
-7) Exit
-MENU
+      printf '%s\n' \
+        '1) ENTER / chain status' \
+        '2) EXIT nodes / Controller' \
+        '3) AmneziaWG pairs' \
+        '4) Dataplane: HAProxy ↔ Telemt' \
+        '5) Anti-DPI / official MTProxyL' \
+        '6) Shared TCP/443 / selfsteal classifier' \
+        '7) Emergency built-in Zapret2 fallback' \
+        '8) Exit'
     fi
-    local c; c=$(choice '> ' 1 7)
+    local c; c=$(choice '> ' 1 8)
     case "$c" in
       1) enter_status; pause;;
       2) run_or_warn tyxe-pool-node menu; pause;;
       3) awg_menu;;
       4) dataplane_menu;;
       5) run_or_warn tyxe-mtproxyl menu; pause;;
-      6) run_or_warn tyxe-antidpi-fallback status; pause;;
-      7) return 0;;
+      6) shared443_menu;;
+      7) run_or_warn tyxe-antidpi-fallback status; pause;;
+      8) return 0;;
     esac
   done
 }
@@ -156,25 +126,9 @@ agent_menu(){
   while :; do
     clear 2>/dev/null || true
     cyan "$TITLE"
-    if [[ $LANG_CODE == ru ]]; then
-      cat <<'MENU'
-1) Статус EXIT
-2) Управление Telemt
-3) Выход
-MENU
-    else
-      cat <<'MENU'
-1) EXIT status
-2) Manage Telemt
-3) Exit
-MENU
-    fi
+    if [[ $LANG_CODE == ru ]]; then printf '%s\n' '1) Статус EXIT' '2) Управление Telemt' '3) Выход'; else printf '%s\n' '1) EXIT status' '2) Manage Telemt' '3) Exit'; fi
     local c; c=$(choice '> ' 1 3)
-    case "$c" in
-      1) agent_status; pause;;
-      2) run_or_warn tyxe-telemt menu; pause;;
-      3) return 0;;
-    esac
+    case "$c" in 1) agent_status; pause;; 2) run_or_warn tyxe-telemt menu; pause;; 3) return 0;; esac
   done
 }
 
