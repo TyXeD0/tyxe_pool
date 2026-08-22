@@ -24,6 +24,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile agent/*.py controller/*.py
+      - name: systemd unit syntax
+        run: |
+          set -euo pipefail
+          systemd-analyze verify systemd/*.service
       - name: No committed private material
         run: |
           set -euo pipefail
