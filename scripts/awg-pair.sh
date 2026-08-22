@@ -11,11 +11,19 @@ DROPIN=/etc/systemd/system/proxy-pool-agent.service.d/10-tyxe-awg.conf
 
 red(){ printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green(){ printf '\033[32m%s\033[0m\n' "$*"; }
+yellow(){ printf '\033[33m%s\033[0m\n' "$*" >&2; }
 cyan(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 read_tty(){ local n="$1" p="$2" v=''; read -r -p "$p" v </dev/tty || true; printf -v "$n" '%s' "$v"; }
 ask(){ local n="$1" p="$2" d="$3" v=''; read_tty v "$p [$d]: "; printf -v "$n" '%s' "${v:-$d}"; }
 yesno(){ local p="$1" v=''; read_tty v "$p [y/N]: "; [[ "$v" =~ ^[yY]$ ]]; }
 getenv(){ sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"; }
+valid_port(){ [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
+valid_ipv4(){ python3 - "$1" <<'PY' >/dev/null 2>&1
+import ipaddress,sys
+try: ipaddress.IPv4Address(sys.argv[1])
+except Exception: raise SystemExit(1)
+PY
+}
 
 [[ $EUID -eq 0 ]] || { red 'Запустите через sudo/root.'; exit 1; }
 
@@ -33,21 +41,22 @@ rx(){ ssh "${SSH[@]}" "$TARGET" "$@"; }
 rscript(){ ssh "${SSH[@]}" "$TARGET" 'bash -s'; }
 
 install_awg_local(){
-  command -v awg >/dev/null 2>&1 && modprobe amneziawg >/dev/null 2>&1 && return
+  command -v awg >/dev/null 2>&1 && command -v awg-quick >/dev/null 2>&1 && modprobe amneziawg >/dev/null 2>&1 && return
   . /etc/os-release
   [[ ${ID:-} == ubuntu ]] || { red 'AWG beta сейчас рассчитан на Ubuntu 22.04/24.04.'; return 1; }
   apt-get update -y
-  DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common python3-launchpadlib gnupg2 "linux-headers-$(uname -r)"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common python3-launchpadlib gnupg2 "linux-headers-$(uname -r)" openssh-client iputils-ping curl
   grep -Rqs 'ppa.launchpadcontent.net/amnezia/ppa' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || add-apt-repository -y ppa:amnezia/ppa
   apt-get update -y
   DEBIAN_FRONTEND=noninteractive apt-get install -y amneziawg
   modprobe amneziawg
+  command -v awg >/dev/null && command -v awg-quick >/dev/null
 }
 
 install_awg_remote(){
   rscript <<'REMOTE'
 set -Eeuo pipefail
-command -v awg >/dev/null 2>&1 && modprobe amneziawg >/dev/null 2>&1 && exit 0
+if command -v awg >/dev/null 2>&1 && command -v awg-quick >/dev/null 2>&1 && modprobe amneziawg >/dev/null 2>&1; then exit 0; fi
 . /etc/os-release
 [[ "${ID:-}" == ubuntu ]] || { echo 'TYXE: EXIT должен быть Ubuntu 22.04/24.04 для текущего AWG beta.' >&2; exit 1; }
 apt-get update -y
@@ -56,6 +65,7 @@ grep -Rqs 'ppa.launchpadcontent.net/amnezia/ppa' /etc/apt/sources.list /etc/apt/
 apt-get update -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y amneziawg
 modprobe amneziawg
+command -v awg >/dev/null && command -v awg-quick >/dev/null
 REMOTE
 }
 
@@ -69,6 +79,7 @@ save_state(){
     printf 'AWG_PORT=%q\n' "$AWG_PORT"
     printf 'ENTER_IP=%q\n' "$ENTER_IP"
     printf 'EXIT_IP=%q\n' "$EXIT_IP"
+    printf 'AGENT_PORT=%q\n' "$AGENT_PORT"
     printf 'ENTER_PUBLIC_IP=%q\n' "$ENTER_PUBLIC_IP"
     printf 'LOCAL_BACKUP=%q\n' "$LOCAL_BACKUP"
     printf 'REMOTE_BACKUP=%q\n' "$REMOTE_BACKUP"
@@ -86,6 +97,7 @@ load_state(){
   # STATE создаёт только TYXE через printf %q.
   # shellcheck disable=SC1090
   . "$STATE"
+  AGENT_PORT=${AGENT_PORT:-9100}
   ssh_build
 }
 
@@ -184,6 +196,19 @@ EOF
   unset EPRIV XPRIV PSK
 }
 
+remote_setting(){
+  local key="$1"
+  rx "python3 - '$key'" <<'PY'
+from pathlib import Path
+import sys
+key=sys.argv[1]+'='
+p=Path('/etc/proxy-pool/settings.env')
+for line in p.read_bytes().decode('utf-8',errors='ignore').splitlines():
+    if line.startswith(key):
+        print(line.split('=',1)[1].strip().strip('"').strip("'")); break
+PY
+}
+
 move_agent(){
   rx "test -f '$ETC/settings.env'" || return 0
   rscript <<EOF
@@ -206,22 +231,14 @@ cat > '$DROPIN' <<'UNIT'
 [Unit]
 Requires=awg-quick@awg0.service
 After=awg-quick@awg0.service
+
+[Service]
+ExecStartPost=
+ExecStartPost=/bin/sh -c 'i=0; while [ "$$i" -lt 40 ]; do /usr/bin/curl -fsS "http://$EXIT_IP:$AGENT_PORT/healthz" >/dev/null 2>&1 && exit 0; i=$$((i+1)); sleep 0.25; done; exit 1'
 UNIT
 systemctl daemon-reload
 systemctl restart proxy-pool-agent
 EOF
-}
-
-remote_token(){
-  rscript <<'REMOTE'
-python3 - <<'PY'
-from pathlib import Path
-p=Path('/etc/proxy-pool/settings.env')
-for l in p.read_text(encoding='utf-8',errors='ignore').splitlines():
-    if l.startswith('PROXY_POOL_AGENT_TOKEN='):
-        print(l.split('=',1)[1].strip().strip('"').strip("'")); break
-PY
-REMOTE
 }
 
 register_node(){
@@ -231,10 +248,10 @@ register_node(){
   [[ -n $lt && -n ${TOKEN:-} ]] || return 0
   count=$(curl -fsS -H "Authorization: Bearer $lt" "http://127.0.0.1:$cp/api/nodes" | python3 -c 'import json,sys;print(len(json.load(sys.stdin).get("nodes",[])))')
   [[ $count == 0 ]] || { echo 'Controller уже содержит EXIT — автодобавление пропущено.'; return 0; }
-  name=$(curl -fsS -H "Authorization: Bearer $TOKEN" "http://$EXIT_IP:9100/v1/status" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("node_name","PL EXIT"))')
-  payload=$(python3 - "$name" "$EXIT_IP" "$TOKEN" <<'PY'
+  name=$(curl -fsS -H "Authorization: Bearer $TOKEN" "http://$EXIT_IP:$AGENT_PORT/v1/status" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("node_name","PL EXIT"))')
+  payload=$(python3 - "$name" "$EXIT_IP" "$AGENT_PORT" "$TOKEN" <<'PY'
 import json,sys
-print(json.dumps({"name":sys.argv[1],"address":sys.argv[2],"agent_port":9100,"token":sys.argv[3]}))
+print(json.dumps({"name":sys.argv[1],"address":sys.argv[2],"agent_port":int(sys.argv[3]),"token":sys.argv[4]}))
 PY
 )
   curl -fsS -H "Authorization: Bearer $lt" -H 'Content-Type: application/json' -d "$payload" "http://127.0.0.1:$cp/api/nodes" >/dev/null
@@ -245,20 +262,25 @@ setup(){
   cyan 'TYXE AWG ENTER ↔ EXIT'
   [[ ! -r $STATE ]] || { yesno 'AWG pair уже настроен. Пересоздать?' || exit 0; }
 
-  ask EXIT_HOST 'Публичный IP/hostname EXIT' ''
-  [[ $EXIT_HOST =~ ^[A-Za-z0-9._:-]+$ ]] || { red 'Некорректный EXIT host.'; exit 1; }
-  ask SSH_PORT 'SSH-порт EXIT' 22
+  ask EXIT_HOST 'Публичный IPv4/hostname EXIT' ''
+  [[ -n $EXIT_HOST && $EXIT_HOST =~ ^[A-Za-z0-9._-]+$ ]] || { red 'Некорректный EXIT host.'; exit 1; }
+  ask SSH_PORT 'SSH-порт EXIT' 22; valid_port "$SSH_PORT" || { red 'Некорректный SSH-порт.'; exit 1; }
   ask SSH_KEY 'SSH private key (пусто = password/ssh-agent)' ''
   [[ -z $SSH_KEY || -r $SSH_KEY ]] || { red 'SSH key не читается.'; exit 1; }
-  ask AWG_PORT 'UDP-порт AWG на EXIT' 8443
-  ask ENTER_IP 'Tunnel IP ENTER' 10.10.10.2
-  ask EXIT_IP 'Tunnel IP EXIT' 10.10.10.1
+  ask AWG_PORT 'UDP-порт AWG на EXIT' 8443; valid_port "$AWG_PORT" || { red 'Некорректный AWG-порт.'; exit 1; }
+  ask ENTER_IP 'Tunnel IP ENTER' 10.10.10.2; valid_ipv4 "$ENTER_IP" || { red 'Некорректный ENTER tunnel IPv4.'; exit 1; }
+  ask EXIT_IP 'Tunnel IP EXIT' 10.10.10.1; valid_ipv4 "$EXIT_IP" || { red 'Некорректный EXIT tunnel IPv4.'; exit 1; }
+  [[ $ENTER_IP != "$EXIT_IP" ]] || { red 'Tunnel IP должны отличаться.'; exit 1; }
   ssh_build
 
   cyan 'SSH'
   rx 'id -u' | grep -qx 0 || { red 'Для beta нужен root SSH на EXIT.'; exit 1; }
   ENTER_PUBLIC_IP=$(rx "printf '%s\n' \"\$SSH_CLIENT\" | awk '{print \$1}'")
+  valid_ipv4 "$ENTER_PUBLIC_IP" || { red 'EXIT не смог определить публичный IPv4 ENTER.'; exit 1; }
   green "EXIT видит ENTER как $ENTER_PUBLIC_IP"
+  rx "test -f '$ETC/settings.env' && grep -q '^PROXY_POOL_ROLE=agent' '$ETC/settings.env'" || { red 'На EXIT не обнаружен TYXE Agent.'; exit 1; }
+  AGENT_PORT=$(remote_setting PROXY_POOL_AGENT_PORT || true); AGENT_PORT=${AGENT_PORT:-9100}
+  valid_port "$AGENT_PORT" || { red 'Некорректный порт EXIT Agent.'; exit 1; }
 
   cyan 'AmneziaWG'
   install_awg_local
@@ -277,6 +299,8 @@ setup(){
     if ! rx "ufw status | grep -Fq '$AWG_PORT/udp'"; then
       rx "ufw allow from '$ENTER_PUBLIC_IP' to any port '$AWG_PORT' proto udp"
       UFW_ADDED=1
+    else
+      yellow "На EXIT уже есть UFW-правило для $AWG_PORT/udp; TYXE не изменяет пользовательское правило."
     fi
   fi
   save_state
@@ -287,15 +311,17 @@ setup(){
   systemctl restart "$AWG_SERVICE"
 
   cyan 'Agent'
-  TOKEN=$(remote_token || true)
+  TOKEN=$(remote_setting PROXY_POOL_AGENT_TOKEN || true)
   move_agent
 
   cyan 'Проверка'
-  ping -c 3 -W 2 "$EXIT_IP" >/dev/null || { red 'Нет ping до EXIT tunnel IP.'; exit 1; }
+  ping -c 3 -W 2 "$EXIT_IP" >/dev/null || { red 'Нет ping до EXIT tunnel IP. Для отката: sudo tyxe-awg rollback'; exit 1; }
   green "ping $EXIT_IP: OK"
   if [[ -n ${TOKEN:-} ]]; then
-    curl -fsS -H "Authorization: Bearer $TOKEN" "http://$EXIT_IP:9100/v1/status" | python3 -m json.tool
+    curl -fsS -H "Authorization: Bearer $TOKEN" "http://$EXIT_IP:$AGENT_PORT/v1/status" | python3 -m json.tool || { red 'Agent через AWG недоступен. Для отката: sudo tyxe-awg rollback'; exit 1; }
     register_node
+  else
+    yellow 'Agent token на EXIT не найден; туннель поднят, но Agent API не проверен.'
   fi
   green 'AWG pair готов. Agent API доступен только через туннель.'
   echo 'Следующий этап: Telemt proxy_protocol/bind + HAProxy.'
@@ -307,6 +333,7 @@ status(){
   systemctl status "$AWG_SERVICE" --no-pager -l || true
   awg show awg0 || true
   ping -c 2 -W 2 "$EXIT_IP" || true
+  if [[ -n ${AGENT_PORT:-} ]]; then curl -fsS "http://$EXIT_IP:$AGENT_PORT/healthz" || true; echo; fi
   rx "systemctl status '$AWG_SERVICE' --no-pager -l" || true
 }
 
