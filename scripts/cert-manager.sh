@@ -53,15 +53,47 @@ cert_dir(){
 public_ipv4(){ ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([^ ]*\).*/\1/p' | head -n1; }
 
 public_dns_ipv4(){
-  local d="$1" r ans
+  local d="$1" r ans endpoint
+
+  # Query recursive resolvers directly first. This bypasses NSS and /etc/hosts.
   if command -v dig >/dev/null 2>&1; then
-    for r in 1.1.1.1 8.8.8.8; do
-      ans=$(dig +time=2 +tries=1 +short A "$d" "@$r" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/{print; exit}')
+    for r in 1.1.1.1 8.8.8.8 9.9.9.9; do
+      ans=$(dig +time=2 +tries=1 +short A "$d" "@$r" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/{print; exit}' || true)
       [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
     done
   fi
-  ans=$(getent ahostsv4 "$d" 2>/dev/null | awk 'NR==1{print $1}')
-  [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
+
+  # dnsutils is not guaranteed to be present on older TYXE installs. Use public
+  # DNS-over-HTTPS as a fallback instead of getent, because getent consults
+  # /etc/hosts and can therefore return 127.0.1.1 for the local hostname.
+  if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    for endpoint in \
+      "https://cloudflare-dns.com/dns-query?name=$d&type=A" \
+      "https://dns.google/resolve?name=$d&type=A"
+    do
+      ans=$(
+        curl -fsS --connect-timeout 3 --max-time 6 \
+          -H 'accept: application/dns-json' "$endpoint" 2>/dev/null |
+        python3 -c 'import ipaddress,json,sys
+try:
+    doc=json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+for item in doc.get("Answer", []):
+    if item.get("type") != 1:
+        continue
+    value=str(item.get("data", "")).strip()
+    try:
+        ipaddress.IPv4Address(value)
+    except Exception:
+        continue
+    print(value)
+    break' 2>/dev/null | head -n1 || true
+      )
+      [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
+    done
+  fi
+
   return 1
 }
 
@@ -125,7 +157,11 @@ preflight_http(){
 
   resolved=$(public_dns_ipv4 "$d" || true)
   pub=$(public_ipv4)
-  [[ -n $resolved ]] || { red "Публичный DNS A для $d не резолвится."; return 1; }
+  [[ -n $resolved ]] || {
+    red "Не удалось получить публичную DNS A-запись для $d через независимые DNS-resolver'ы."
+    red 'Проверка /etc/hosts намеренно не используется.'
+    return 1
+  }
   if [[ -n $pub && $resolved != "$pub" ]]; then
     red "Публичный DNS $d -> $resolved, а IPv4 ENTER -> $pub"
     red 'Для HTTP-01 A-запись должна указывать на ENTER. Локальная запись /etc/hosts здесь не учитывается.'
