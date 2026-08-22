@@ -73,7 +73,6 @@ for item in doc.get("Answer", []):
 
 public_dns_ipv4(){
   local d="$1" r ans endpoint host ip
-
   if command -v dig >/dev/null 2>&1; then
     for r in 1.1.1.1 8.8.8.8 9.9.9.9; do
       ans=$(dig +time=2 +tries=1 +short A "$d" "@$r" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/{print; exit}' || true)
@@ -82,7 +81,6 @@ public_dns_ipv4(){
       [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
     done
   fi
-
   if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
     while IFS='|' read -r host ip endpoint; do
       [[ -n $host && -n $ip && -n $endpoint ]] || continue
@@ -101,7 +99,6 @@ dns.google|8.8.8.8|/resolve
 dns.google|8.8.4.4|/resolve
 EOF_DOH
   fi
-
   return 1
 }
 
@@ -140,10 +137,6 @@ challenge_debug(){
   nginx -T 2>/dev/null | grep -n -F -B2 -A10 "server_name $d" >&2 || true
 }
 
-t yxe_managed_has_acme(){
-  return 1
-}
-
 tyxe_managed_has_acme(){
   local d="$1"
   [[ -r $TYXE_NGINX ]] || return 1
@@ -153,11 +146,6 @@ tyxe_managed_has_acme(){
 
 ensure_acme_http_server(){
   local d="$1" backup=''
-
-  # Remove stale helper produced by an older failed preflight before testing the
-  # canonical TYXE nginx config. The installer already creates ACME locations
-  # for proxy/panel hostnames, so a duplicate server_name can only make routing
-  # ambiguous.
   if [[ -e $ACME_HELPER ]]; then
     backup="${ACME_HELPER}.bak.$(date +%s%N)"
     cp -a "$ACME_HELPER" "$backup"
@@ -169,19 +157,16 @@ ensure_acme_http_server(){
       rm -f "$backup"
     fi
   fi
-
   if challenge_ok "$d"; then
     rm -f "$backup"
     return 0
   fi
-
   if tyxe_managed_has_acme "$d"; then
     red "TYXE nginx уже содержит ACME location для $d, но loopback-проверка не получает challenge-файл."
     challenge_debug "$d"
     [[ -n $backup && -e $backup ]] && rm -f "$backup"
     return 1
   fi
-
   yellow "Для $d нет рабочего ACME HTTP-01 location. TYXE добавит отдельный nginx helper только на TCP/80."
   cat > "$ACME_HELPER" <<EOF
 server {
@@ -223,7 +208,6 @@ preflight_http(){
   command -v nginx >/dev/null 2>&1 || { red 'nginx не установлен.'; return 1; }
   systemctl is-active --quiet nginx || { red 'nginx не active.'; return 1; }
   ss -ltnH 'sport = :80' 2>/dev/null | grep -q . || { red 'На ENTER никто не слушает TCP/80.'; return 1; }
-
   resolved=$(public_dns_ipv4 "$d" || true)
   pub=$(public_ipv4)
   if [[ -n $resolved ]]; then
@@ -236,7 +220,6 @@ preflight_http(){
     green "DNS/HTTP-01 preflight: $d -> $resolved, webroot OK"
     return 0
   fi
-
   yellow "Не удалось независимо проверить публичную A-запись $d с этого VPS."
   yellow 'Проверка /etc/hosts намеренно не используется; возможно, провайдер блокирует public DNS/DoH.'
   [[ -n $pub ]] && yellow "Ожидаемый публичный IPv4 ENTER: $pub"
@@ -286,17 +269,14 @@ ensure_cert(){
     install_renew_timer
     return 0
   fi
-
   preflight_http "$DOMAIN" || return 1
   yellow "Будет выпущен Let's Encrypt сертификат для $DOMAIN и сохранён вне rollback TYXE."
   yesno 'Выпустить сертификат?' || return 0
   read -r -p "Email Let's Encrypt (пусто = без email): " email </dev/tty || true
-
   install -d -m 700 "$CERT_STORE" "$CERT_WORK" "$CERT_LOGS"
   args=(certonly --webroot -w "$SITE_ROOT" -d "$DOMAIN" --cert-name "$DOMAIN" --agree-tos --non-interactive --no-eff-email --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS")
   [[ -n $email ]] && args+=(--email "$email") || args+=(--register-unsafely-without-email)
   certbot "${args[@]}"
-
   existing=$(cert_dir "$DOMAIN") || { red 'Certbot завершился, но сертификат не найден в ожидаемом хранилище.'; return 1; }
   install_renew_timer
   green "Готово: $existing"
