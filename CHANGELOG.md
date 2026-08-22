@@ -10,6 +10,8 @@
 - Extended central web panel with Telemt status, start/stop/restart and logs.
 - Enforced one EXIT during the stabilization milestone.
 - Extended rollback to remove the Telemt system user/group only when tyxe_pool recorded that it created them.
+- Rollback no longer sources `settings.env`; this fixes node names containing spaces such as `PL Hostoff` and makes partial-install rollback safer.
+- Node-agent systemd startup now waits for `/healthz` before reporting a successful start, avoiding the first-install readiness race on port 9100.
 - Added GitHub Actions Bash/Python syntax checks and a private-key-material guard.
 - MTProxyL/Zapret2 remains intentionally planned for ENTER, not EXIT.
 
