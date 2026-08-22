@@ -33,6 +33,7 @@ trm(){
       no_manifest) echo 'Manifest установки не найден';; svc) echo 'Остановка/восстановление сервиса';;
       restore) echo 'Восстановление';; remove) echo 'Удаление';; pkg) echo 'Удаление пакета, установленного tyxe_pool';;
       user) echo 'Удаление системного пользователя, созданного tyxe_pool';; group) echo 'Удаление системной группы, созданной tyxe_pool';;
+      user_proc) echo 'Завершение процессов системного пользователя, созданного tyxe_pool';;
       keep_cert) echo 'Сертификаты Let’s Encrypt намеренно не удаляются.';; purge) echo 'Удаление служебного состояния tyxe_pool';;
       done) echo 'Откат завершён.';; audit) echo 'Manifest сохранён для аудита';;
     esac
@@ -41,6 +42,7 @@ trm(){
       no_manifest) echo 'Install manifest not found';; svc) echo 'Stopping/restoring service';;
       restore) echo 'Restoring';; remove) echo 'Removing';; pkg) echo 'Removing package installed by tyxe_pool';;
       user) echo 'Removing system user created by tyxe_pool';; group) echo 'Removing system group created by tyxe_pool';;
+      user_proc) echo 'Terminating processes owned by a system user created by tyxe_pool';;
       keep_cert) echo 'Let’s Encrypt certificates are intentionally preserved.';; purge) echo 'Removing tyxe_pool runtime state';;
       done) echo 'Rollback complete.';; audit) echo 'Manifest retained for audit';;
     esac
@@ -82,11 +84,20 @@ done < <(tac "$TMP")
 run systemctl daemon-reload || true
 
 # Remove OS identities only when the installer explicitly recorded that it created them.
-# USER is processed before GROUP so the group is not still referenced by that account.
+# Before userdel, terminate only processes owned by that recorded user. We never pkill
+# by process name, because another pre-existing Telemt deployment may exist on the host.
 while IFS= read -r line; do
   [[ "$line" == USER\ * ]] || continue
   u="${line#USER }"; [[ -n "$u" ]] || continue
-  if getent passwd "$u" >/dev/null 2>&1; then say "$(trm user): $u"; run userdel "$u" || true; fi
+  if getent passwd "$u" >/dev/null 2>&1; then
+    if pgrep -u "$u" >/dev/null 2>&1; then
+      say "$(trm user_proc): $u"
+      run pkill -TERM -u "$u" || true
+      (( DRY )) || sleep 1
+      pgrep -u "$u" >/dev/null 2>&1 && run pkill -KILL -u "$u" || true
+    fi
+    say "$(trm user): $u"; run userdel "$u" || true
+  fi
 done < <(tac "$TMP")
 while IFS= read -r line; do
   [[ "$line" == GROUP\ * ]] || continue
