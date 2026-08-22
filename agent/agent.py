@@ -7,6 +7,52 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 VERSION = "0.3.0"
+SETTINGS_PATH = "/etc/proxy-pool/settings.env"
+_ALLOWED_SETTINGS = {
+    "TYXE_POOL_LANG",
+    "PROXY_POOL_LANG",
+    "PROXY_POOL_ROLE",
+    "PROXY_POOL_AGENT_BIND",
+    "PROXY_POOL_AGENT_PORT",
+    "PROXY_POOL_TELEMT_SERVICE",
+    "PROXY_POOL_TELEMT_CONFIG",
+    "PROXY_POOL_TELEMT_BIN",
+    "PROXY_POOL_NODE_NAME",
+    "PROXY_POOL_AGENT_TOKEN",
+}
+
+
+def load_settings_file(path=SETTINGS_PATH):
+    """Load only known TYXE keys as a fallback when systemd EnvironmentFile is malformed.
+
+    A previous installer test produced an EnvironmentFile that systemd did not import.
+    We deliberately do not execute/source this file. NUL bytes are removed, only an
+    allowlist of keys is accepted, and existing process environment values win.
+    """
+    loaded = []
+    try:
+        raw = open(path, "rb").read().replace(b"\x00", b"")
+        text = raw.decode("utf-8", errors="replace")
+    except OSError:
+        return loaded
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in _ALLOWED_SETTINGS or key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        os.environ[key] = value
+        loaded.append(key)
+    return loaded
+
+
+FALLBACK_SETTINGS_LOADED = load_settings_file()
 BIND = os.environ.get("PROXY_POOL_AGENT_BIND", "127.0.0.1")
 PORT = int(os.environ.get("PROXY_POOL_AGENT_PORT", "9100"))
 TELEMT_SERVICE = os.environ.get("PROXY_POOL_TELEMT_SERVICE", "telemt")
@@ -106,6 +152,9 @@ def status():
         "telemt_service": TELEMT_SERVICE,
         "language": LANG,
         "agent_version": VERSION,
+        "bind": BIND,
+        "port": PORT,
+        "settings_fallback": bool(FALLBACK_SETTINGS_LOADED),
     }
 
 
