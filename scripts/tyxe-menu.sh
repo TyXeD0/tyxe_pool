@@ -26,14 +26,12 @@ if [[ $LANG_CODE == ru ]]; then
   NOT_INSTALLED='компонент ещё не установлен'
   PRESS_ENTER='Enter для продолжения...'
   STATUS='Статус'
-  EXIT='Выход'
 else
   TITLE='TYXE Pool — main menu'
   BAD_CHOICE='Invalid choice.'
   NOT_INSTALLED='component is not installed yet'
   PRESS_ENTER='Press Enter to continue...'
   STATUS='Status'
-  EXIT='Exit'
 fi
 
 enter_status(){
@@ -55,6 +53,65 @@ agent_status(){
   printf 'AWG:    '; systemctl is-active awg-quick@awg0.service 2>/dev/null || true
   printf 'Telemt: '; systemctl is-active telemt 2>/dev/null || true
   ss -ltnp 2>/dev/null | grep -E ':(443|9100|9091)\b' || true
+}
+
+awg_menu(){
+  while :; do
+    cyan 'AmneziaWG'
+    if [[ $LANG_CODE == ru ]]; then
+      cat <<'MENU'
+1) Список пар
+2) Статус пары
+3) Добавить EXIT / создать пару
+4) Откатить пару
+5) Назад
+MENU
+    else
+      cat <<'MENU'
+1) List pairs
+2) Pair status
+3) Add EXIT / create pair
+4) Roll back pair
+5) Back
+MENU
+    fi
+    local c; c=$(choice '> ' 1 5)
+    case "$c" in
+      1) run_or_warn tyxe-awg list; pause;;
+      2) run_or_warn tyxe-awg status; pause;;
+      3) run_or_warn tyxe-awg setup; pause;;
+      4) run_or_warn tyxe-awg rollback; pause;;
+      5) return 0;;
+    esac
+  done
+}
+
+dataplane_menu(){
+  while :; do
+    cyan 'Dataplane'
+    if [[ $LANG_CODE == ru ]]; then
+      cat <<'MENU'
+1) Статус
+2) Настроить HAProxy ↔ Telemt
+3) Откатить dataplane
+4) Назад
+MENU
+    else
+      cat <<'MENU'
+1) Status
+2) Configure HAProxy ↔ Telemt
+3) Roll back dataplane
+4) Back
+MENU
+    fi
+    local c; c=$(choice '> ' 1 4)
+    case "$c" in
+      1) run_or_warn tyxe-dataplane status; pause;;
+      2) run_or_warn tyxe-dataplane setup; pause;;
+      3) run_or_warn tyxe-dataplane rollback; pause;;
+      4) return 0;;
+    esac
+  done
 }
 
 enter_menu(){
@@ -86,8 +143,8 @@ MENU
     case "$c" in
       1) enter_status; pause;;
       2) run_or_warn tyxe-pool-node menu; pause;;
-      3) run_or_warn tyxe-awg; pause;;
-      4) run_or_warn tyxe-dataplane status; pause;;
+      3) awg_menu;;
+      4) dataplane_menu;;
       5) run_or_warn tyxe-mtproxyl menu; pause;;
       6) run_or_warn tyxe-antidpi-fallback status; pause;;
       7) return 0;;
