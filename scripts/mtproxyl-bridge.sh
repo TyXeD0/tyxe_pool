@@ -31,8 +31,30 @@ show_context(){
   cyan 'TYXE ↔ MTProxyL'
   echo 'Роль MTProxyL здесь: host-only anti-DPI на ENTER.'
   echo 'TYXE продолжает владеть HAProxy/AWG/EXIT Telemt.'
-  echo 'Рекомендуемый режим MTProxyL: Reanimator → Только оптимизация.'
+  echo 'Обязательный режим MTProxyL: Reanimator → Только оптимизация.'
   echo "Client-facing port: TCP/$PORT (HAProxy)"
+}
+
+mode_json(){ mt mode --json 2>/dev/null || true; }
+assert_tools_only(){
+  local j mode tools
+  j=$(mode_json)
+  if [[ -z $j ]]; then
+    red 'Не удалось прочитать режим MTProxyL через: mtproxyl mode --json'
+    return 1
+  fi
+  read -r mode tools < <(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("mode",""), str(bool(d.get("tools_only",False))).lower())' <<<"$j" 2>/dev/null || echo 'invalid false')
+  if [[ $mode != reanimator ]]; then
+    red "MTProxyL mode=$mode. На TYXE ENTER разрешён только Reanimator."
+    red 'Откройте полное меню MTProxyL → Цель / режим → Reanimator.'
+    return 1
+  fi
+  if [[ $tools != true ]]; then
+    red 'MTProxyL Reanimator активен, но «Только оптимизация» выключена.'
+    red 'Откройте полное меню MTProxyL → Цель / режим → Только оптимизация.'
+    return 1
+  fi
+  green 'MTProxyL mode: reanimator + tools_only=true'
 }
 
 install_upstream(){
@@ -46,7 +68,7 @@ install_upstream(){
 
   cyan 'Установка актуального MTProxyL upstream'
   yellow 'Сейчас будет запущен официальный интерактивный installer Liafanx/MTProxyL из ветки main.'
-  yellow 'На ENTER выбирайте Reanimator. Если Telemt не найден — выбирайте «Только оптимизация».'
+  yellow 'На ENTER выбирайте Reanimator → «Только оптимизация».'
   yellow 'НЕ выбирайте Manager: движком и Telemt управляет TYXE на EXIT.'
   yesno 'Скачать и запустить официальный MTProxyL installer?' y || return 0
 
@@ -63,8 +85,11 @@ install_upstream(){
 
   have_mtproxyl || { red 'MTProxyL после installer не найден.'; return 1; }
   cyan 'Проверка режима'
-  mt mode || true
-  yellow 'Если выше указан Manager — не применяйте фиксы и переключите MTProxyL в Reanimator/«Только оптимизация» через его меню.'
+  if ! assert_tools_only; then
+    yellow 'Фиксы пока НЕ будут применяться. Нужно один раз включить безопасный host-only режим.'
+    if yesno 'Открыть полное меню MTProxyL сейчас?' y; then mt menu; fi
+    assert_tools_only || return 1
+  fi
   set_port
 }
 
@@ -77,31 +102,22 @@ update_upstream(){
     mt update --no-restart
     green 'MTProxyL обновлён.'
   fi
+  assert_tools_only
   set_port
 }
 
 set_port(){
   have_mtproxyl || return 1
-  # MTProxyL exposes host-level Zapret2 port independently from an engine target.
   mt nft set ZAPRET2_PORT "$PORT" >/dev/null
   green "MTProxyL Zapret2 port = $PORT"
-}
-
-assert_not_manager(){
-  local mode=''
-  mode=$(mt mode 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
-  if grep -q 'manager' <<<"$mode" && ! grep -q 'reanimator' <<<"$mode"; then
-    red 'MTProxyL сейчас в Manager mode. Для TYXE ENTER это запрещено.'
-    red 'Откройте MTProxyL menu → Цель / режим → Reanimator → Только оптимизация.'
-    return 1
-  fi
 }
 
 apply_zapret2(){
   require_enter
   have_mtproxyl || install_upstream
-  assert_not_manager
+  assert_tools_only
   if yesno 'Перед применением проверить обновление MTProxyL?' y; then update_upstream; fi
+  assert_tools_only
   set_port
   cyan 'MTProxyL Zapret2 MTProto fix'
   mt nft zapret2
@@ -110,8 +126,9 @@ apply_zapret2(){
 apply_smart(){
   require_enter
   have_mtproxyl || install_upstream
-  assert_not_manager
+  assert_tools_only
   if yesno 'Перед применением проверить обновление MTProxyL?' y; then update_upstream; fi
+  assert_tools_only
   cyan 'MTProxyL Smart By-MEKO'
   mt nft smart
 }
@@ -121,7 +138,7 @@ status(){
   show_context
   if ! have_mtproxyl; then yellow 'MTProxyL не установлен.'; return 0; fi
   printf '\nVersion:\n'; mt version || true
-  printf '\nMode:\n'; mt mode || true
+  printf '\nMode:\n'; mt mode --json || mt mode || true
   printf '\nUpdate:\n'; mt update-check || true
   printf '\nNFT/Zapret2:\n'; mt nft status --json || mt nft status || true
   printf '\nHAProxy listener:\n'; ss -ltnpH 'sport = :443' || true
@@ -130,7 +147,7 @@ status(){
   nft list table ip MTProtoL 2>/dev/null || true
 }
 
-zapret_wscale(){ require_enter; have_mtproxyl || { red 'MTProxyL не установлен.'; return 1; }; set_port; mt nft zapret2-wscale; }
+zapret_wscale(){ require_enter; have_mtproxyl || { red 'MTProxyL не установлен.'; return 1; }; assert_tools_only; set_port; mt nft zapret2-wscale; }
 remove_zapret2(){ require_enter; have_mtproxyl || { red 'MTProxyL не установлен.'; return 1; }; mt nft zapret2-rm; }
 open_upstream_menu(){ require_enter; have_mtproxyl || install_upstream; mt menu; }
 
