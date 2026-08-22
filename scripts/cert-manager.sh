@@ -10,7 +10,6 @@ CERT_LOGS=/var/lib/tyxe-pool-persistent/acme-logs
 RENEW_SERVICE=/etc/systemd/system/tyxe-cert-renew.service
 RENEW_TIMER=/etc/systemd/system/tyxe-cert-renew.timer
 ACME_HELPER=/etc/nginx/conf.d/tyxe-acme-http.conf
-TYXE_NGINX=$ETC/selfsteal/nginx.conf
 
 red(){ printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green(){ printf '\033[32m%s\033[0m\n' "$*"; }
@@ -21,7 +20,7 @@ yesno(){ local p="$1" v=''; read -r -p "$p [y/N]: " v </dev/tty || true; [[ "$v"
 
 [[ $EUID -eq 0 ]] || { red 'Запустите через sudo/root.'; exit 1; }
 [[ -r $SETTINGS ]] || { red 'TYXE settings не найдены.'; exit 1; }
-[[ "$(getenv_file "$SETTINGS" PROXY_POOL_ROLE)" == controller ]] || { red 'Сертификаты shared-443 управляются на ENTER/controller.'; exit 1; }
+[[ "$(getenv_file "$SETTINGS" PROXY_POOL_ROLE)" == controller ]] || { red 'Сертификаты управляются на ENTER/controller.'; exit 1; }
 
 PROXY_DOMAIN=$(getenv_file "$SETTINGS" PROXY_POOL_PROXY_DOMAIN)
 PANEL_DOMAIN=$(getenv_file "$SETTINGS" PROXY_POOL_PANEL_DOMAIN)
@@ -36,9 +35,12 @@ resolve_target(){
   [[ -n ${DOMAIN:-} ]] || { red 'Домен не настроен.'; return 1; }
   valid_domain "$DOMAIN" || { red "Некорректный домен: $DOMAIN"; return 1; }
   if [[ "$DOMAIN" != "$PROXY_DOMAIN" && "$DOMAIN" != "$PANEL_DOMAIN" ]]; then
-    red 'Разрешены только proxy/panel домены текущей установки TYXE.'; return 1
+    red 'Разрешены только proxy/panel домены текущей установки TYXE.'
+    return 1
   fi
 }
+
+ensure_dirs(){ install -d -m 700 "$CERT_STORE" "$CERT_WORK" "$CERT_LOGS"; }
 
 cert_dir(){
   local d="$1"
@@ -49,6 +51,23 @@ cert_dir(){
     printf '/etc/letsencrypt/live/%s' "$d"; return 0
   fi
   return 1
+}
+
+renewal_conf(){
+  local d="$1" c
+  [[ -r "$CERT_STORE/renewal/$d.conf" ]] && { printf '%s' "$CERT_STORE/renewal/$d.conf"; return 0; }
+  for c in "$CERT_STORE"/renewal/*.conf; do
+    [[ -r $c ]] || continue
+    grep -Fq "live/$d/" "$c" && { printf '%s' "$c"; return 0; }
+  done
+  return 1
+}
+
+authenticator_for(){
+  local d="$1" c
+  c=$(renewal_conf "$d" || true)
+  [[ -n $c ]] || { echo unknown; return 0; }
+  sed -n 's/^[[:space:]]*authenticator[[:space:]]*=[[:space:]]*//p' "$c" | tail -n1 | tr -d '[:space:]'
 }
 
 public_ipv4(){ ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([^ ]*\).*/\1/p' | head -n1; }
@@ -72,7 +91,7 @@ for item in doc.get("Answer", []):
 }
 
 public_dns_ipv4(){
-  local d="$1" r ans endpoint host ip
+  local d="$1" r ans host ip endpoint
   if command -v dig >/dev/null 2>&1; then
     for r in 1.1.1.1 8.8.8.8 9.9.9.9; do
       ans=$(dig +time=2 +tries=1 +short A "$d" "@$r" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/{print; exit}' || true)
@@ -102,8 +121,29 @@ EOF_DOH
   return 1
 }
 
+check_public_dns(){
+  local d="$1" resolved pub
+  resolved=$(public_dns_ipv4 "$d" || true)
+  pub=$(public_ipv4)
+  if [[ -n $resolved ]]; then
+    if [[ -n $pub && $resolved != "$pub" ]]; then
+      red "Публичный DNS $d -> $resolved, а IPv4 ENTER -> $pub"
+      red 'Для текущего DNS-only HTTP-01 A-запись должна указывать на ENTER.'
+      return 1
+    fi
+    green "Публичный DNS: $d -> $resolved"
+    return 0
+  fi
+  yellow "Не удалось независимо проверить публичную A-запись $d с этого VPS."
+  yellow 'Проверка /etc/hosts намеренно не используется; окончательную проверку выполнит Let’s Encrypt.'
+  [[ -n $pub ]] && yellow "Ожидаемый публичный IPv4 ENTER: $pub"
+  return 0
+}
+
 challenge_ok(){
   local d="$1" token path got
+  systemctl is-active --quiet nginx || return 1
+  ss -ltnH 'sport = :80' 2>/dev/null | grep -q . || return 1
   install -d -m 755 "$SITE_ROOT" "$SITE_ROOT/.well-known" "$SITE_ROOT/.well-known/acme-challenge"
   chmod 755 "$SITE_ROOT" "$SITE_ROOT/.well-known" "$SITE_ROOT/.well-known/acme-challenge" 2>/dev/null || true
   token="tyxe-preflight-$$-$(date +%s%N)"
@@ -117,133 +157,56 @@ challenge_ok(){
   [[ "$got" == "$token" ]]
 }
 
-challenge_debug(){
-  local d="$1" token path code body
-  install -d -m 755 "$SITE_ROOT/.well-known/acme-challenge"
-  token="tyxe-debug-$$-$(date +%s%N)"
-  path="$SITE_ROOT/.well-known/acme-challenge/$token"
-  body="/tmp/tyxe-acme-body.$$"
-  printf '%s' "$token" > "$path"; chmod 644 "$path"
-  yellow "Файл проверки на диске: $path"
-  ls -l "$path" >&2 || true
-  code=$(curl -q --noproxy '*' -sS --max-time 5 \
-    --resolve "$d:80:127.0.0.1" \
-    -o "$body" -w '%{http_code}' \
-    "http://$d/.well-known/acme-challenge/$token" 2>/dev/null || true)
-  yellow "Локальный nginx probe: http://$d/.well-known/acme-challenge/<token> -> HTTP ${code:-000}"
-  if [[ -s $body ]]; then
-    yellow "Первые 160 байт ответа: $(head -c 160 "$body" | tr '\n\r' '  ')"
+run_with_nginx_stopped(){
+  local was_active=0 rc=0
+  if systemctl is-active --quiet nginx; then
+    was_active=1
+    systemctl stop nginx
   fi
-  rm -f "$path" "$body"
-  yellow "Активные nginx server-блоки для $d:"
-  nginx -T 2>/dev/null | grep -n -F -B2 -A12 "server_name $d" >&2 || true
-}
-
-tyxe_managed_has_acme(){
-  local d="$1"
-  [[ -r $TYXE_NGINX ]] || return 1
-  grep -Fq "server_name $d" "$TYXE_NGINX" || return 1
-  grep -Fq '/.well-known/acme-challenge/' "$TYXE_NGINX" || return 1
-}
-
-ensure_acme_http_server(){
-  local d="$1" backup=''
-  if [[ -e $ACME_HELPER ]]; then
-    backup="${ACME_HELPER}.bak.$(date +%s%N)"
-    cp -a "$ACME_HELPER" "$backup"
-    rm -f "$ACME_HELPER"
-    if nginx -t >/dev/null 2>&1; then
-      systemctl reload nginx
-    else
-      cp -a "$backup" "$ACME_HELPER"
-      rm -f "$backup"
-    fi
-  fi
-  if challenge_ok "$d"; then
-    rm -f "$backup"
-    return 0
-  fi
-  if tyxe_managed_has_acme "$d"; then
-    red "TYXE nginx уже содержит ACME location для $d, но loopback-проверка не получает challenge-файл."
-    challenge_debug "$d"
-    [[ -n $backup && -e $backup ]] && rm -f "$backup"
+  if ss -ltnH 'sport = :80' 2>/dev/null | grep -q .; then
+    red 'TCP/80 остаётся занят после остановки nginx; standalone ACME запускать небезопасно.'
+    (( was_active )) && systemctl start nginx || true
     return 1
   fi
-  yellow "Для $d нет рабочего ACME HTTP-01 location. TYXE добавит отдельный nginx helper только на TCP/80."
-  cat > "$ACME_HELPER" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $d;
-    location ^~ /.well-known/acme-challenge/ {
-        alias $SITE_ROOT/.well-known/acme-challenge/;
-        default_type text/plain;
-        add_header Cache-Control "no-store" always;
-    }
-    location / { return 404; }
-}
-EOF
-  if ! nginx -t; then
-    rm -f "$ACME_HELPER"
-    [[ -n $backup && -e $backup ]] && cp -a "$backup" "$ACME_HELPER"
-    rm -f "$backup"
-    nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
-    red 'nginx -t не прошёл после добавления ACME helper.'
-    return 1
-  fi
-  systemctl reload nginx
-  if ! challenge_ok "$d"; then
-    challenge_debug "$d"
-    rm -f "$ACME_HELPER"
-    [[ -n $backup && -e $backup ]] && cp -a "$backup" "$ACME_HELPER"
-    rm -f "$backup"
-    nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
-    red "Даже после ACME helper nginx не отдаёт challenge для $d."
-    return 1
-  fi
-  rm -f "$backup"
-  green "ACME HTTP-01 helper для $d готов и сохранён для будущего продления."
+  if "$@"; then rc=0; else rc=$?; fi
+  (( was_active )) && systemctl start nginx || true
+  return "$rc"
 }
 
-preflight_http(){
-  local d="$1" resolved pub
-  command -v certbot >/dev/null 2>&1 || { red 'certbot не установлен.'; return 1; }
-  command -v nginx >/dev/null 2>&1 || { red 'nginx не установлен.'; return 1; }
-  systemctl is-active --quiet nginx || { red 'nginx не active.'; return 1; }
-  ss -ltnH 'sport = :80' 2>/dev/null | grep -q . || { red 'На ENTER никто не слушает TCP/80.'; return 1; }
-  resolved=$(public_dns_ipv4 "$d" || true)
-  pub=$(public_ipv4)
-  if [[ -n $resolved ]]; then
-    if [[ -n $pub && $resolved != "$pub" ]]; then
-      red "Публичный DNS $d -> $resolved, а IPv4 ENTER -> $pub"
-      red 'Для HTTP-01 A-запись должна указывать на ENTER. Локальная запись /etc/hosts здесь не учитывается.'
-      return 1
-    fi
-    ensure_acme_http_server "$d" || return 1
-    green "DNS/HTTP-01 preflight: $d -> $resolved, webroot OK"
-    return 0
-  fi
-  yellow "Не удалось независимо проверить публичную A-запись $d с этого VPS."
-  yellow 'Проверка /etc/hosts намеренно не используется; возможно, провайдер блокирует public DNS/DoH.'
-  [[ -n $pub ]] && yellow "Ожидаемый публичный IPv4 ENTER: $pub"
-  ensure_acme_http_server "$d" || return 1
-  green "Локальный HTTP-01 webroot для $d: OK"
-  yellow 'TYXE не блокирует выпуск: окончательную внешнюю DNS/HTTP-проверку выполнит Let’s Encrypt.'
-  return 0
+certbot_common(){
+  printf '%s\n' \
+    --agree-tos --non-interactive --no-eff-email \
+    --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS"
+}
+
+issue_webroot(){
+  local d="$1" email="$2" args
+  mapfile -t args < <(certbot_common)
+  args=(certonly --webroot -w "$SITE_ROOT" -d "$d" --cert-name "$d" "${args[@]}")
+  [[ -n $email ]] && args+=(--email "$email") || args+=(--register-unsafely-without-email)
+  certbot "${args[@]}"
+}
+
+issue_standalone(){
+  local d="$1" email="$2" args
+  mapfile -t args < <(certbot_common)
+  args=(certbot certonly --standalone --preferred-challenges http --http-01-port 80 \
+    -d "$d" --cert-name "$d" "${args[@]}")
+  [[ -n $email ]] && args+=(--email "$email") || args+=(--register-unsafely-without-email)
+  run_with_nginx_stopped "${args[@]}"
 }
 
 install_renew_timer(){
-  install -d -m 700 "$CERT_STORE" "$CERT_WORK" "$CERT_LOGS"
-  cat > "$RENEW_SERVICE" <<EOF
+  ensure_dirs
+  cat > "$RENEW_SERVICE" <<'EOF'
 [Unit]
 Description=TYXE Let's Encrypt renewal
-After=network-online.target nginx.service
-Wants=network-online.target nginx.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/certbot renew --config-dir $CERT_STORE --work-dir $CERT_WORK --logs-dir $CERT_LOGS --quiet
-ExecStartPost=/bin/systemctl reload nginx
+ExecStart=/usr/local/sbin/tyxe-cert renew-auto
 EOF
   cat > "$RENEW_TIMER" <<'EOF'
 [Unit]
@@ -261,28 +224,99 @@ EOF
   systemctl enable --now tyxe-cert-renew.timer >/dev/null
 }
 
+reconfigure_standalone(){
+  local d="$1" args
+  command -v certbot >/dev/null 2>&1 || return 1
+  certbot help reconfigure >/dev/null 2>&1 || { yellow 'Этот Certbot не поддерживает reconfigure; оставляю текущий authenticator.'; return 1; }
+  cyan "ACME migration: $d -> standalone"
+  args=(certbot reconfigure --cert-name "$d" --authenticator standalone \
+    --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS" --non-interactive)
+  if run_with_nginx_stopped "${args[@]}"; then
+    green "Renewal authenticator для $d переведён на standalone."
+    return 0
+  fi
+  yellow "Не удалось перевести $d на standalone; существующий сертификат не изменён."
+  return 1
+}
+
+renew_one(){
+  local d="$1" dry="${2:-0}" auth args rc=0
+  cert_dir "$d" >/dev/null 2>&1 || return 0
+  renewal_conf "$d" >/dev/null 2>&1 || { yellow "Нет renewal config для $d; пропускаю."; return 0; }
+  auth=$(authenticator_for "$d")
+
+  if [[ $auth != standalone ]] && ! challenge_ok "$d"; then
+    yellow "Webroot-проверка для $d не проходит; пробую безопасно перевести renewal на standalone."
+    reconfigure_standalone "$d" || true
+    auth=$(authenticator_for "$d")
+  fi
+
+  args=(certbot renew --cert-name "$d" --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS")
+  (( dry )) && args+=(--dry-run) || args+=(--quiet)
+
+  if [[ $auth == standalone ]]; then
+    if run_with_nginx_stopped "${args[@]}"; then rc=0; else rc=$?; fi
+  else
+    if "${args[@]}"; then rc=0; else rc=$?; fi
+  fi
+  return "$rc"
+}
+
+renew_all(){
+  local dry="${1:-0}" d failed=0
+  ensure_dirs
+  for d in "$PROXY_DOMAIN" "$PANEL_DOMAIN"; do
+    [[ -n $d ]] || continue
+    cyan "Renewal: $d ($(authenticator_for "$d"))"
+    renew_one "$d" "$dry" || failed=1
+  done
+  systemctl is-active --quiet nginx && systemctl reload nginx || true
+  (( failed == 0 )) || { red 'Одна или несколько ACME renewal-проверок завершились ошибкой.'; return 1; }
+}
+
 ensure_cert(){
   resolve_target "${1:-proxy}" || return 1
   cyan "Certificate: $DOMAIN"
-  local existing email=''
+  command -v certbot >/dev/null 2>&1 || { red 'certbot не установлен.'; return 1; }
+  ensure_dirs
+  check_public_dns "$DOMAIN" || return 1
+
+  local existing email='' mode
   if existing=$(cert_dir "$DOMAIN"); then
     green "Сертификат уже существует: $existing"
     openssl x509 -in "$existing/fullchain.pem" -noout -subject -issuer -enddate 2>/dev/null || true
-    ensure_acme_http_server "$DOMAIN" || true
+    green "Renewal authenticator: $(authenticator_for "$DOMAIN")"
     install_renew_timer
     return 0
   fi
-  preflight_http "$DOMAIN" || return 1
-  yellow "Будет выпущен Let's Encrypt сертификат для $DOMAIN и сохранён вне rollback TYXE."
+
+  if challenge_ok "$DOMAIN"; then
+    mode=webroot
+    green 'Локальный HTTP-01 webroot: OK'
+  else
+    mode=standalone
+    yellow 'nginx webroot не прошёл локальную HTTP-01 проверку.'
+    yellow 'TYXE использует fallback standalone: nginx будет остановлен только на время Certbot.'
+  fi
+
+  yellow "Будет выпущен Let's Encrypt сертификат для $DOMAIN ($mode) и сохранён вне rollback TYXE."
   yesno 'Выпустить сертификат?' || return 0
   read -r -p "Email Let's Encrypt (пусто = без email): " email </dev/tty || true
-  install -d -m 700 "$CERT_STORE" "$CERT_WORK" "$CERT_LOGS"
-  args=(certonly --webroot -w "$SITE_ROOT" -d "$DOMAIN" --cert-name "$DOMAIN" --agree-tos --non-interactive --no-eff-email --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS")
-  [[ -n $email ]] && args+=(--email "$email") || args+=(--register-unsafely-without-email)
-  certbot "${args[@]}"
+
+  if [[ $mode == webroot ]]; then
+    if ! issue_webroot "$DOMAIN" "$email"; then
+      yellow 'Webroot issuance не удался. Повторный запрос автоматически НЕ выполняю, чтобы не расходовать ACME rate limits.'
+      yellow "После устранения причины повторите: sudo tyxe-cert ensure ${1:-proxy}"
+      return 1
+    fi
+  else
+    issue_standalone "$DOMAIN" "$email"
+  fi
+
   existing=$(cert_dir "$DOMAIN") || { red 'Certbot завершился, но сертификат не найден в ожидаемом хранилище.'; return 1; }
   install_renew_timer
   green "Готово: $existing"
+  green "Renewal authenticator: $(authenticator_for "$DOMAIN")"
   openssl x509 -in "$existing/fullchain.pem" -noout -subject -issuer -enddate 2>/dev/null || true
 }
 
@@ -295,6 +329,8 @@ status(){
     if p=$(cert_dir "$d"); then
       printf '%s\n' "$p"
       openssl x509 -in "$p/fullchain.pem" -noout -enddate 2>/dev/null || true
+      printf '  authenticator: %s\n' "$(authenticator_for "$d")"
+      if challenge_ok "$d"; then echo '  webroot probe: OK'; else echo '  webroot probe: unavailable (standalone fallback available)'; fi
     else
       echo 'missing'
     fi
@@ -302,19 +338,20 @@ status(){
   printf '\nRenew timer: '
   systemctl is-enabled tyxe-cert-renew.timer 2>/dev/null || true
   systemctl list-timers tyxe-cert-renew.timer --no-pager 2>/dev/null || true
-  printf 'ACME HTTP helper: '
-  [[ -s $ACME_HELPER ]] && echo "$ACME_HELPER" || echo 'not needed/not created'
+  printf 'Legacy ACME helper: '
+  [[ -s $ACME_HELPER ]] && echo "$ACME_HELPER" || echo 'not present'
 }
 
 renew_test(){
   cyan 'TYXE renewal dry-run'
   install_renew_timer
-  certbot renew --dry-run --config-dir "$CERT_STORE" --work-dir "$CERT_WORK" --logs-dir "$CERT_LOGS"
+  renew_all 1
 }
 
 case "${1:-status}" in
   ensure|issue) shift; ensure_cert "${1:-proxy}" ;;
   status) status ;;
+  renew-auto) renew_all 0 ;;
   renew-test) renew_test ;;
-  *) echo 'Usage: tyxe-cert [status|ensure proxy|ensure panel|renew-test]' >&2; exit 2 ;;
+  *) echo 'Usage: tyxe-cert [status|ensure proxy|ensure panel|renew-test|renew-auto]' >&2; exit 2 ;;
 esac
