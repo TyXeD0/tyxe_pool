@@ -52,29 +52,8 @@ cert_dir(){
 
 public_ipv4(){ ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([^ ]*\).*/\1/p' | head -n1; }
 
-public_dns_ipv4(){
-  local d="$1" r ans endpoint
-
-  # Query recursive resolvers directly first. This bypasses NSS and /etc/hosts.
-  if command -v dig >/dev/null 2>&1; then
-    for r in 1.1.1.1 8.8.8.8 9.9.9.9; do
-      ans=$(dig +time=2 +tries=1 +short A "$d" "@$r" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/{print; exit}' || true)
-      [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
-    done
-  fi
-
-  # dnsutils is not guaranteed to be present on older TYXE installs. Use public
-  # DNS-over-HTTPS as a fallback instead of getent, because getent consults
-  # /etc/hosts and can therefore return 127.0.1.1 for the local hostname.
-  if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
-    for endpoint in \
-      "https://cloudflare-dns.com/dns-query?name=$d&type=A" \
-      "https://dns.google/resolve?name=$d&type=A"
-    do
-      ans=$(
-        curl -fsS --connect-timeout 3 --max-time 6 \
-          -H 'accept: application/dns-json' "$endpoint" 2>/dev/null |
-        python3 -c 'import ipaddress,json,sys
+parse_dns_json_ipv4(){
+  python3 -c 'import ipaddress,json,sys
 try:
     doc=json.load(sys.stdin)
 except Exception:
@@ -88,10 +67,44 @@ for item in doc.get("Answer", []):
     except Exception:
         continue
     print(value)
-    break' 2>/dev/null | head -n1 || true
-      )
+    break' 2>/dev/null | head -n1
+}
+
+public_dns_ipv4(){
+  local d="$1" r ans endpoint host ip
+
+  # Query public recursive resolvers directly. Try UDP and TCP/53 because some
+  # providers/DPI block one transport but not the other. This bypasses NSS and
+  # /etc/hosts completely.
+  if command -v dig >/dev/null 2>&1; then
+    for r in 1.1.1.1 8.8.8.8 9.9.9.9; do
+      ans=$(dig +time=2 +tries=1 +short A "$d" "@$r" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/{print; exit}' || true)
+      [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
+      ans=$(dig +tcp +time=2 +tries=1 +short A "$d" "@$r" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/{print; exit}' || true)
       [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
     done
+  fi
+
+  # DoH by hostname is useful when ordinary DNS works, but the decisive fallback
+  # below pins the HTTPS endpoint to a known resolver IP with curl --resolve.
+  # That means the VPS does not need DNS at all to perform this lookup.
+  if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    while IFS='|' read -r host ip endpoint; do
+      [[ -n $host && -n $ip && -n $endpoint ]] || continue
+      ans=$(
+        curl -fsS --connect-timeout 3 --max-time 7 \
+          --resolve "$host:443:$ip" \
+          -H 'accept: application/dns-json' \
+          "https://$host$endpoint?name=$d&type=A" 2>/dev/null |
+        parse_dns_json_ipv4 || true
+      )
+      [[ -n $ans ]] && { printf '%s' "$ans"; return 0; }
+    done <<'EOF_DOH'
+cloudflare-dns.com|1.1.1.1|/dns-query
+cloudflare-dns.com|1.0.0.1|/dns-query
+dns.google|8.8.8.8|/resolve
+dns.google|8.8.4.4|/resolve
+EOF_DOH
   fi
 
   return 1
@@ -157,19 +170,24 @@ preflight_http(){
 
   resolved=$(public_dns_ipv4 "$d" || true)
   pub=$(public_ipv4)
-  [[ -n $resolved ]] || {
-    red "Не удалось получить публичную DNS A-запись для $d через независимые DNS-resolver'ы."
-    red 'Проверка /etc/hosts намеренно не используется.'
-    return 1
-  }
-  if [[ -n $pub && $resolved != "$pub" ]]; then
-    red "Публичный DNS $d -> $resolved, а IPv4 ENTER -> $pub"
-    red 'Для HTTP-01 A-запись должна указывать на ENTER. Локальная запись /etc/hosts здесь не учитывается.'
-    return 1
+  if [[ -n $resolved ]]; then
+    if [[ -n $pub && $resolved != "$pub" ]]; then
+      red "Публичный DNS $d -> $resolved, а IPv4 ENTER -> $pub"
+      red 'Для HTTP-01 A-запись должна указывать на ENTER. Локальная запись /etc/hosts здесь не учитывается.'
+      return 1
+    fi
+    ensure_acme_http_server "$d" || return 1
+    green "DNS/HTTP-01 preflight: $d -> $resolved, webroot OK"
+    return 0
   fi
 
+  yellow "Не удалось независимо проверить публичную A-запись $d с этого VPS."
+  yellow 'Проверка /etc/hosts намеренно не используется; возможно, провайдер блокирует public DNS/DoH.'
+  [[ -n $pub ]] && yellow "Ожидаемый публичный IPv4 ENTER: $pub"
   ensure_acme_http_server "$d" || return 1
-  green "DNS/HTTP-01 preflight: $d -> $resolved, webroot OK"
+  green "Локальный HTTP-01 webroot для $d: OK"
+  yellow 'TYXE не блокирует выпуск: окончательную внешнюю DNS/HTTP-проверку выполнит Let’s Encrypt.'
+  return 0
 }
 
 install_renew_timer(){
