@@ -9,13 +9,20 @@
 - Host-level HAProxy dataplane with PROXY protocol v2 to tunnel-bound Telemt.
 - `tyxe-dataplane` backup/status/rollback workflow.
 - Persistent role-aware `sudo tyxe` main menu.
-- Post-install management component deployment (`tyxe-awg`, `tyxe-dataplane`, `tyxe-mtproxyl`, fallback anti-DPI helper).
+- Post-install management component deployment (`tyxe-awg`, `tyxe-dataplane`, `tyxe-mtproxyl`, `tyxe-shared443`, fallback anti-DPI helper).
 - Official upstream MTProxyL anti-DPI bridge for ENTER.
   - downloads/updates current `Liafanx/MTProxyL` upstream when selected;
   - requires `Reanimator` + `tools_only=true` before applying any fix;
   - exposes current upstream Zapret2, Smart By-MEKO and wscale diagnostics;
   - keeps TYXE ownership of HAProxy/AWG/EXIT Telemt;
   - retains the built-in Zapret2 implementation only as an emergency fallback.
+- Transactional shared TCP/443 classifier/selfsteal for ENTER.
+  - reads the current Telemt `[censorship] tls_domain` from EXIT;
+  - routes only the configured FakeTLS SNI to Telemt through the existing AWG backend;
+  - routes the proxy hostname and unknown TLS traffic to a loopback nginx decoy;
+  - optionally routes the panel hostname to the localhost Controller over a dedicated nginx TLS backend;
+  - refuses ambiguous configurations where FakeTLS SNI matches the proxy/panel hostname;
+  - validates nginx/HAProxy before reload and has independent backup/rollback.
 
 ### Fixed during real-VPS validation
 - Interactive AWG input variable shadowing.
@@ -31,9 +38,10 @@
 - Controller keeps the EXIT node `up` across polling cycles.
 - HAProxy `0.0.0.0:443` → `10.10.10.1:443` with `send-proxy-v2`.
 - Telemt tunnel bind and `proxy_protocol=true`.
-- Server-side dataplane postcheck passes.
+- Real Telegram client connectivity through MTProxyL/Zapret2 over Wi-Fi and mobile networks.
+- ENTER and EXIT reboot persistence with client connectivity restored automatically.
 
 ### Pending live validation
-- Actual Telegram client connection through the upstream MTProxyL anti-DPI layer on ENTER.
-- Shared 443 selfsteal/classifier.
+- Shared 443 selfsteal/classifier on the real ENTER.
+- Controller stale-refresh race source fix.
 - Multi-EXIT balancing/failover.
