@@ -6,7 +6,7 @@ AWG_DIR=/etc/amnezia/amneziawg
 NODES_DIR=$ETC/awg-nodes
 BACKUP_ROOT=/var/lib/proxy-pool/awg-nodes
 REMOTE_IF=awg0
-REMOTE_SERVICE=awg-quick@awg0
+REMOTE_SERVICE=awg-quick@awg0.service
 DROPIN=/etc/systemd/system/proxy-pool-agent.service.d/10-tyxe-awg.conf
 DEFAULT_POOLS="10.10.10.0/24,10.254.0.0/16,172.31.240.0/20,192.168.250.0/24"
 
@@ -41,7 +41,7 @@ require_enter(){
 }
 
 ssh_build(){
-  SSH=(-p "$SSH_PORT" -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2)
+  SSH=(-p "$SSH_PORT" -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o ControlMaster=auto -o ControlPersist=120 -o ControlPath=/run/tyxe-awg-%C)
   [[ -n ${SSH_KEY:-} ]] && SSH+=(-i "$SSH_KEY")
   TARGET="root@$EXIT_HOST"
 }
