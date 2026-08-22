@@ -138,7 +138,7 @@ Rollback only the AWG pair and restore the backed-up EXIT Agent settings:
 sudo tyxe-awg rollback
 ```
 
-The manager does not full-tunnel either VPS and does not change SSH routing. Only the EXIT tunnel `/32` is routed through AWG. If UFW is active, the AWG UDP port is allowed only from the public IPv4 address of ENTER. The Agent is then rebound from localhost to the EXIT tunnel IP and made dependent on `awg-quick@awg0.service`.
+The manager does not install a default route through AWG and does not change the public SSH route. The tunnel interfaces use the official `10.10.10.0/24` addressing while each peer's `AllowedIPs` is restricted to the opposite tunnel IP. If UFW is active, the AWG UDP port is allowed only from the public IPv4 address of ENTER when TYXE adds the rule. The Agent is then rebound from localhost to the EXIT tunnel IP and made dependent on `awg-quick@awg0.service`.
 
 ## Node management
 
