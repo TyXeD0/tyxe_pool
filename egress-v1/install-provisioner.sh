@@ -28,6 +28,8 @@ echo
 echo "===== PRE-FLIGHT ====="
 /usr/local/bin/mtproxyl-egress status --json | python3 -m json.tool >/dev/null
 printf "Dynamic daemon: "; systemctl is-active mtproxyl-egressd.service
+python3 -m py_compile "$PROV_SRC" "$AGENT_SRC"
+echo "Source syntax: OK"
 
 if ! command -v sshpass >/dev/null 2>&1; then
   echo
@@ -40,9 +42,17 @@ fi
 echo
 echo "===== BACKUP ====="
 install -d -m 700 "$BACKUP"
-cp -a "$PROV_DST" "$BACKUP/" 2>/dev/null || true
+PREVIOUS_PROVISIONER_VALID=0
+if [[ -x "$PROV_DST" ]] && "$PROV_DST" --version >/dev/null 2>&1; then
+  cp -a "$PROV_DST" "$BACKUP/"
+  PREVIOUS_PROVISIONER_VALID=1
+elif [[ -e "$PROV_DST" ]]; then
+  cp -a "$PROV_DST" "$BACKUP/broken-mtproxyl-egress-provision" || true
+  echo "Previous provisioner is broken; saved for diagnostics only."
+fi
 cp -a "$AGENT_DST" "$BACKUP/" 2>/dev/null || true
 cp -a /etc/mtproxyl-egress/ssh "$BACKUP/ssh" 2>/dev/null || true
+printf '%s\n' "$PREVIOUS_PROVISIONER_VALID" >"$BACKUP/previous-valid"
 echo "Backup: $BACKUP"
 
 echo
@@ -53,8 +63,11 @@ install -o root -g root -m 755 "$AGENT_SRC" "$AGENT_DST"
 install -d -o root -g root -m 700 /etc/mtproxyl-egress/ssh
 install -d -o root -g root -m 700 /var/lib/mtproxyl-egress/jobs
 install -d -o root -g root -m 700 /run/mtproxyl-egress
+
 python3 -m py_compile "$PROV_DST" "$AGENT_DST"
+"$PROV_DST" --version
 "$PROV_DST" --help >/dev/null
+"$PROV_DST" preflight | python3 -m json.tool
 
 cat >/root/rollback-mtproxyl-egress-provisioner.sh <<EOF
 #!/usr/bin/env bash
@@ -62,7 +75,7 @@ set -Eeuo pipefail
 BACKUP="$BACKUP"
 PROV="$PROV_DST"
 AGENT="$AGENT_DST"
-if [[ -f "\$BACKUP/$(basename "$PROV_DST")" ]]; then
+if [[ "\$(cat "\$BACKUP/previous-valid" 2>/dev/null || echo 0)" == "1" && -f "\$BACKUP/$(basename "$PROV_DST")" ]]; then
   install -m 755 "\$BACKUP/$(basename "$PROV_DST")" "\$PROV"
 else
   rm -f "\$PROV"
