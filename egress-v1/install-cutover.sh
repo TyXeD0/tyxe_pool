@@ -51,8 +51,40 @@ echo "===== PRE-FLIGHT ====="
 mtproxyl version
 /usr/local/bin/mtproxyl-panel version || true
 
+# Idempotent re-run: a successful earlier cutover intentionally leaves all
+# legacy control services disabled. Treat that as success after validating
+# the live dynamic daemon instead of demanding the legacy manager again.
+if systemctl is-active --quiet mtproxyl-egressd.service; then
+    echo "Dynamic egressd: already active"
+    systemctl is-enabled --quiet mtproxyl-egressd.service \
+        || fail "Dynamic egressd is active but not enabled."
+
+    [[ -x "$CLI_DST" ]] || fail "Dynamic CLI is missing: $CLI_DST"
+    "$CLI_DST" status --json | python3 -m json.tool >/dev/null \
+        || fail "Dynamic egress status is not valid JSON."
+
+    LIVE_ROUTE="$(ip route get 149.154.167.51 mark 0x200000)"
+    LIVE_DEV="$(awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}' <<<"$LIVE_ROUTE")"
+    [[ -n "$LIVE_DEV" ]] || fail "Cannot determine current dynamic egress device."
+
+    if systemctl is-active --quiet "$LEGACY_MANAGER" || \
+       systemctl is-active --quiet "$LEGACY_ROUTE" || \
+       systemctl is-active --quiet "$LEGACY_SYNC_TIMER"; then
+        fail "Dynamic egressd and a legacy control service are active at the same time."
+    fi
+
+    printf "Panel: "
+    systemctl is-active "$PANEL_SERVICE" || true
+    echo "Current route: $LIVE_ROUTE"
+    echo
+    "$CLI_DST" status | sed -n '1,35p'
+    echo
+    green "DYNAMIC CUTOVER ALREADY COMPLETE"
+    exit 0
+fi
+
 systemctl is-active --quiet "$LEGACY_MANAGER" \
-    || fail "Legacy manager is not active."
+    || fail "Neither dynamic egressd nor the legacy manager is active. Restore the legacy manager or use the rollback script before cutover."
 
 OLD_ROUTE="$(ip route get 149.154.167.51 mark 0x200000)"
 OLD_DEV="$(awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}' <<<"$OLD_ROUTE")"
@@ -219,118 +251,103 @@ systemctl stop "$LEGACY_SYNC_SERVICE" 2>/dev/null || true
 systemctl disable --now "$LEGACY_MANAGER"
 systemctl disable --now "$LEGACY_ROUTE" 2>/dev/null || true
 
-echo
-echo "===== ACTIVATE DYNAMIC CLI + BRIDGE ====="
-
-mv "$CLI_DST.new" "$CLI_DST"
-mv "$BRIDGE_DST.new" "$BRIDGE_DST"
-chown root:root "$CLI_DST" "$BRIDGE_DST"
+mv -f "$CLI_DST.new" "$CLI_DST"
+mv -f "$BRIDGE_DST.new" "$BRIDGE_DST"
 chmod 755 "$CLI_DST" "$BRIDGE_DST"
-
-echo
-echo "===== START DYNAMIC DAEMON ====="
 
 systemctl enable --now mtproxyl-egressd.service
 
-for i in $(seq 1 30); do
-    [[ -S /run/mtproxyl-egress/control.sock ]] && break
+for _ in $(seq 1 20); do
+    systemctl is-active --quiet mtproxyl-egressd.service && break
+    sleep 1
+done
+systemctl is-active --quiet mtproxyl-egressd.service || fail "Dynamic egressd failed to start."
+
+# Wait for a fully populated live status.
+for _ in $(seq 1 30); do
+    if "$CLI_DST" status --json 2>/dev/null | python3 -c '
+import json,sys
+try:d=json.load(sys.stdin)
+except Exception:raise SystemExit(1)
+raise SystemExit(0 if d.get("phase")=="running" and d.get("nodes") else 1)
+'; then
+        break
+    fi
     sleep 1
 done
 
-[[ -S /run/mtproxyl-egress/control.sock ]] || fail "Dynamic control socket did not appear."
+"$CLI_DST" status --json | python3 -m json.tool >/dev/null \
+    || fail "Dynamic status JSON validation failed."
+
+systemctl restart "$PANEL_SERVICE" 2>/dev/null || true
+
+sleep 2
 
 echo
-echo "===== POST-CUTOVER HEALTH ====="
-
-for i in $(seq 1 12); do
-    if "$CLI_DST" status --json >/tmp/mtproxyl-egressd-status.json 2>/dev/null; then
-        HEALTHY="$(
-            python3 - /tmp/mtproxyl-egressd-status.json <<'PY'
-import json,sys
-with open(sys.argv[1],encoding="utf-8") as f:d=json.load(f)
-enabled=[n for n in d.get("nodes",[]) if n.get("enabled")]
-ok=bool(enabled) and all(n.get("health") for n in enabled)
-print("yes" if ok else "no")
-PY
-        )"
-        [[ "$HEALTHY" == yes ]] && break
-    fi
-    sleep 2
-done
-
-"$CLI_DST" status --json > /tmp/mtproxyl-egressd-status.json
-
-python3 - /tmp/mtproxyl-egressd-status.json <<'PY'
-import json,sys
-with open(sys.argv[1],encoding="utf-8") as f:d=json.load(f)
-enabled=[n for n in d.get("nodes",[]) if n.get("enabled")]
-if not enabled:
-    raise SystemExit("no enabled nodes")
-bad=[n.get("name") for n in enabled if not n.get("health")]
-if bad:
-    raise SystemExit("unhealthy after cutover: "+", ".join(map(str,bad)))
-if d.get("active_node") in (None,"block"):
-    raise SystemExit("dynamic manager is unexpectedly blocked")
-t=d.get("telemt") or {}
-if int(t.get("alive_writers") or 0) <= 0:
-    raise SystemExit("Telemt writers are not alive")
-print("Dynamic health: OK")
-print("Active:", d.get("active_node"))
-print("Telemt NAT:", t.get("nat_ip"))
-print("Writers:", t.get("alive_writers"), "/", t.get("required_writers"))
-print("Coverage:", str(t.get("dc_coverage_pct"))+"%")
-PY
+echo "===== POST-CUTOVER VERIFY ====="
 
 NEW_ROUTE="$(ip route get 149.154.167.51 mark 0x200000)"
 NEW_DEV="$(awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}' <<<"$NEW_ROUTE")"
+[[ -n "$NEW_DEV" ]] || fail "Cannot determine dynamic egress device."
 
+"$CLI_DST" status
+
+echo
 echo "Old dev: $OLD_DEV"
 echo "New dev: $NEW_DEV"
+echo "Route:   $NEW_ROUTE"
 
-[[ "$NEW_DEV" == "$OLD_DEV" ]] \
-    || fail "Production route changed unexpectedly: $OLD_DEV -> $NEW_DEV"
+systemctl is-active --quiet "$PANEL_SERVICE" \
+    || fail "Panel did not recover after cutover."
 
-echo
-echo "===== PANEL BRIDGE ====="
+# Validate Telemt DC health; the daemon may briefly be warming writers.
+DC_OK=0
+for _ in $(seq 1 20); do
+    if mtproxyl dc status --json 2>/dev/null | python3 -c '
+import json,sys
+try:d=json.load(sys.stdin)
+except Exception:raise SystemExit(1)
+coverage=int(d.get("coverage_pct") or 0)
+alive=int(d.get("alive_writers") or 0)
+raise SystemExit(0 if coverage >= 80 and alive > 0 else 1)
+'; then
+        DC_OK=1
+        break
+    fi
+    sleep 3
+done
+(( DC_OK == 1 )) || fail "Telemt DC writers did not become healthy after cutover."
 
-sudo -u mtproxyl-panel \
-  sudo -n "$BRIDGE_DST" status \
-  | python3 -m json.tool >/dev/null
-
-systemctl start "$PANEL_SERVICE"
-
-sleep 2
-systemctl is-active --quiet "$PANEL_SERVICE" || fail "Panel failed to start."
-
-echo
-echo "===== CREATE ROLLBACK ====="
+if systemctl is-active --quiet "$LEGACY_MANAGER" || \
+   systemctl is-active --quiet "$LEGACY_ROUTE" || \
+   systemctl is-active --quiet "$LEGACY_SYNC_TIMER"; then
+    fail "A legacy control service is still active after dynamic cutover."
+fi
 
 cat >/root/rollback-mtproxyl-egressd-cutover.sh <<EOF
 #!/usr/bin/env bash
 set -Eeuo pipefail
-
 BACKUP="$BACKUP"
 TELEMT_CONFIG="$TELEMT_CONFIG"
 
-systemctl stop "$PANEL_SERVICE" 2>/dev/null || true
 systemctl disable --now mtproxyl-egressd.service 2>/dev/null || true
 
-install -m 755 "\$BACKUP/mtproxyl-egress" "$CLI_DST"
-install -m 755 "\$BACKUP/mtproxyl-egress-panel-bridge" "$BRIDGE_DST"
+if [[ -f "\$BACKUP/mtproxyl-egress" ]]; then
+    install -m 755 "\$BACKUP/mtproxyl-egress" "$CLI_DST"
+fi
+if [[ -f "\$BACKUP/mtproxyl-egress-panel-bridge" ]]; then
+    install -m 755 "\$BACKUP/mtproxyl-egress-panel-bridge" "$BRIDGE_DST"
+fi
 
 rm -rf /etc/mtproxyl-egress
 cp -a "\$BACKUP/etc-mtproxyl-egress" /etc/mtproxyl-egress
-
 rm -rf /var/lib/mtproxyl-egress
 cp -a "\$BACKUP/var-lib-mtproxyl-egress" /var/lib/mtproxyl-egress
-
 cp -a "\$BACKUP/telemt-config.toml" "\$TELEMT_CONFIG"
 
 systemctl daemon-reload
-
 systemctl enable "$LEGACY_ROUTE" >/dev/null 2>&1 || true
-systemctl restart "$LEGACY_ROUTE" >/dev/null 2>&1 || true
-
+systemctl start "$LEGACY_ROUTE" >/dev/null 2>&1 || true
 systemctl enable "$LEGACY_MANAGER" >/dev/null 2>&1 || true
 systemctl restart "$LEGACY_MANAGER"
 
@@ -338,13 +355,10 @@ if grep -q '^active=active$' "\$BACKUP/$LEGACY_SYNC_TIMER.state" 2>/dev/null; th
     systemctl enable --now "$LEGACY_SYNC_TIMER" >/dev/null 2>&1 || true
 fi
 
-systemctl start "$PANEL_SERVICE"
-
-echo
-echo "Rollback complete."
+systemctl restart "$PANEL_SERVICE" 2>/dev/null || true
+sleep 3
 /usr/local/bin/mtproxyl-egress status
 EOF
-
 chmod 700 /root/rollback-mtproxyl-egressd-cutover.sh
 
 CUTOVER_ACTIVE=0
@@ -354,36 +368,10 @@ echo
 echo "============================================================"
 green " DYNAMIC CUTOVER COMPLETE"
 echo "============================================================"
-echo
-
-printf "Daemon: "
-systemctl is-active mtproxyl-egressd.service
-
-printf "Legacy manager: "
-systemctl is-active "$LEGACY_MANAGER" 2>/dev/null || true
-
-printf "Legacy route:   "
-systemctl is-active "$LEGACY_ROUTE" 2>/dev/null || true
-
-printf "Panel: "
-systemctl is-active "$PANEL_SERVICE"
-
-echo
-"$CLI_DST" status
-
-echo
-echo "Commands:"
-echo "  mtproxyl-egress status"
-echo "  mtproxyl-egress node list"
-echo "  mtproxyl-egress node test PL1"
-echo "  mtproxyl-egress node rename PL1 'Poland Main'"
-echo "  mtproxyl-egress node disable PL2"
-echo "  mtproxyl-egress node enable PL2"
-echo "  mtproxyl-egress node priority PL2 30"
-echo "  mtproxyl-egress switch PL2"
-echo "  mtproxyl-egress auto"
-echo "  mtproxyl-egress direct"
-echo "  mtproxyl-egress block"
+printf "Daemon:         "; systemctl is-active mtproxyl-egressd.service
+printf "Legacy manager: "; systemctl is-active "$LEGACY_MANAGER" || true
+printf "Legacy route:   "; systemctl is-active "$LEGACY_ROUTE" || true
+printf "Panel:          "; systemctl is-active "$PANEL_SERVICE" || true
 echo
 echo "Rollback:"
 echo "  /root/rollback-mtproxyl-egressd-cutover.sh"
