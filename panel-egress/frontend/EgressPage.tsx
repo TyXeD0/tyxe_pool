@@ -137,14 +137,13 @@ function NodeCard({
             <div className="font-semibold text-text-primary truncate">{node.name}</div>
             <Badge variant={node.role === 'primary' ? 'default' : 'outline'}>{roleLabel}</Badge>
             {active && <Badge variant="success">ACTIVE</Badge>}
-            {!node.enabled && <Badge variant="warning">DISABLED</Badge>}
           </div>
           <div className="text-xs text-text-secondary mt-1">
             {node.public_ip || '—'} · {node.id} · priority {node.priority}
           </div>
         </div>
-        <Badge variant={node.health ? 'success' : 'danger'}>
-          {node.health ? 'HEALTHY' : 'DOWN'}
+        <Badge variant={!node.enabled ? 'warning' : node.health ? 'success' : 'danger'}>
+          {!node.enabled ? 'DISABLED' : node.health ? 'HEALTHY' : 'DOWN'}
         </Badge>
       </div>
 
