@@ -1,6 +1,8 @@
 // ── Custom egress manager ───────────────────────────────────────────────────
 
 export type EgressMode = 'auto' | 'direct' | 'block' | 'manual';
+export type EgressSSHAuthMode = 'auto' | 'password' | 'key';
+export type EgressJobState = 'queued' | 'running' | 'done' | 'error';
 
 export interface EgressAgentStatus {
   reachable: boolean;
@@ -108,6 +110,47 @@ export interface EgressConfig {
   handshake_max_age: number;
 }
 
+export interface EgressSSHAuth {
+  mode: EgressSSHAuthMode;
+  secret?: string;
+}
+
+export interface EgressAddNodeRequest {
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  priority?: number;
+  auth: EgressSSHAuth;
+}
+
+export interface EgressRemoveNodeRequest {
+  remote_cleanup: boolean;
+  fallback: 'block' | 'direct';
+  auth: EgressSSHAuth;
+}
+
+export interface EgressProvisionerStatus {
+  ok: boolean;
+  version: string;
+  nodes: number;
+  active?: string | null;
+}
+
+export interface EgressJob {
+  id: string;
+  action: 'add' | 'remove';
+  label?: string;
+  state: EgressJobState;
+  stage?: string;
+  message?: string;
+  created_at?: number;
+  updated_at?: number;
+  finished_at?: number | null;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
 const EGRESS_BASE = `${BASE}/api/egress`;
 
 export const egressApi = {
@@ -141,6 +184,23 @@ export const egressApi = {
       method: 'PATCH',
       body: JSON.stringify({ priority }),
     }),
+
+  provisioner: () => request<EgressProvisionerStatus>(EGRESS_BASE, '/provisioner'),
+
+  addNode: (payload: EgressAddNodeRequest) =>
+    request<EgressJob>(EGRESS_BASE, '/nodes', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  removeNode: (node: string, payload: EgressRemoveNodeRequest) =>
+    request<EgressJob>(EGRESS_BASE, `/nodes/${encodeURIComponent(node)}/remove`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  job: (job: string) =>
+    request<EgressJob>(EGRESS_BASE, `/jobs/${encodeURIComponent(job)}`),
 
   config: () => request<EgressConfig>(EGRESS_BASE, '/config'),
 
