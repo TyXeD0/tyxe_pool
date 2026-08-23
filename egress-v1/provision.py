@@ -21,7 +21,7 @@ import time
 import tomllib
 from typing import Any
 
-VERSION = "1.0.0-dev2"
+VERSION = "1.0.0-dev3"
 ETC = Path("/etc/mtproxyl-egress")
 NODES_DIR = ETC / "nodes.d"
 TOKENS_DIR = ETC / "nodes"
@@ -328,7 +328,7 @@ def remote_write(ssh: SSH, path: str, text: str, mode: int = 0o600) -> None:
     data = base64.b64encode(text.encode()).decode()
     script = f"""
 set -Eeuo pipefail
-install -d -m 700 {shlex.quote(str(Path(path).parent))}
+mkdir -p {shlex.quote(str(Path(path).parent))}
 printf '%s' {shlex.quote(data)} | base64 -d > {shlex.quote(path)}
 chmod {mode:o} {shlex.quote(path)}
 """
@@ -351,7 +351,7 @@ def awg_params() -> dict[str, int]:
     }
 
 
-def config_text(*, private: str, address: str, peer_public: str, allowed: str,
+def config_text(*, private: str, address: str, peer_public: str, allowed_cidr: str,
                 params: dict[str, int], listen: int | None = None, endpoint: str | None = None) -> str:
     lines = [
         "[Interface]",
@@ -364,7 +364,7 @@ def config_text(*, private: str, address: str, peer_public: str, allowed: str,
         lines.append(f"ListenPort = {listen}")
     for k in ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4"):
         lines.append(f"{k} = {params[k]}")
-    lines += ["", "[Peer]", f"PublicKey = {peer_public}", f"AllowedIPs = {allowed}/32"]
+    lines += ["", "[Peer]", f"PublicKey = {peer_public}", f"AllowedIPs = {allowed_cidr}"]
     if endpoint:
         lines.append(f"Endpoint = {endpoint}")
         lines.append("PersistentKeepalive = 25")
@@ -604,7 +604,7 @@ def add_node(req: dict[str, Any]) -> dict[str, Any]:
             private=local_priv,
             address=n["local_tunnel_ip"],
             peer_public=remote_pub,
-            allowed=n["remote_tunnel_ip"],
+            allowed_cidr="0.0.0.0/0",
             params=params,
             endpoint=f"{host}:{n['awg_port']}",
         )
@@ -612,7 +612,7 @@ def add_node(req: dict[str, Any]) -> dict[str, Any]:
             private=remote_priv,
             address=n["remote_tunnel_ip"],
             peer_public=local_pub,
-            allowed=n["local_tunnel_ip"],
+            allowed_cidr=f"{n['local_tunnel_ip']}/32",
             params=params,
             listen=int(n["awg_port"]),
         )
