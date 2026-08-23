@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROV_SRC="$ROOT/provision.py"
-PATCHER="$ROOT/patch-provisioner-dev4.py"
+PATCHER4="$ROOT/patch-provisioner-dev4.py"
+PATCHER5="$ROOT/patch-provisioner-dev5.py"
 AGENT_SRC="$ROOT/node-agent.py"
 PROV_DST="/usr/local/libexec/mtproxyl-egress-provision"
 AGENT_DST="/usr/local/libexec/mtproxyl-node-agent-source"
@@ -18,7 +19,7 @@ fail(){ echo "ERROR: $*" >&2; exit 1; }
 for c in python3 systemctl install ssh apt-get; do
   command -v "$c" >/dev/null 2>&1 || fail "Не найдена команда: $c"
 done
-[[ -f "$PROV_SRC" && -f "$PATCHER" && -f "$AGENT_SRC" ]] || fail "Provisioner assets missing"
+[[ -f "$PROV_SRC" && -f "$PATCHER4" && -f "$PATCHER5" && -f "$AGENT_SRC" ]] || fail "Provisioner assets missing"
 [[ -x /usr/local/bin/mtproxyl-egress ]] || fail "Dynamic Egress CLI missing"
 systemctl is-active --quiet mtproxyl-egressd.service || fail "mtproxyl-egressd is not active"
 
@@ -31,10 +32,11 @@ echo
 echo "===== PRE-FLIGHT ====="
 /usr/local/bin/mtproxyl-egress status --json | python3 -m json.tool >/dev/null
 printf "Dynamic daemon: "; systemctl is-active mtproxyl-egressd.service
-python3 -m py_compile "$PROV_SRC" "$PATCHER" "$AGENT_SRC"
-python3 "$PATCHER" "$PROV_SRC" "$TMP_PROV"
+python3 -m py_compile "$PROV_SRC" "$PATCHER4" "$PATCHER5" "$AGENT_SRC"
+python3 "$PATCHER4" "$PROV_SRC" "$TMP_PROV"
+python3 "$PATCHER5" "$TMP_PROV" "$TMP_PROV"
 python3 -m py_compile "$TMP_PROV"
-echo "Source syntax/compatibility patch: OK"
+echo "Source syntax/compatibility/hardening patches: OK"
 
 if ! command -v sshpass >/dev/null 2>&1; then
   echo
