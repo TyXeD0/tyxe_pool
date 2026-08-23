@@ -17,13 +17,20 @@ import (
 const egressBridge = "/usr/local/sbin/mtproxyl-egress-panel-bridge"
 
 func runEgressBridge(parent context.Context, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
+	return runEgressBridgeInput(parent, nil, args...)
+}
+
+func runEgressBridgeInput(parent context.Context, input []byte, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, 25*time.Second)
 	defer cancel()
 
 	full := append([]string{"-n", egressBridge}, args...)
 	cmd := exec.CommandContext(ctx, "sudo", full...)
 	cmd.Env = []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	}
+	if input != nil {
+		cmd.Stdin = bytes.NewReader(input)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -60,6 +67,40 @@ func writeEgressJSON(w http.ResponseWriter, raw []byte) {
 func validNodeRef(ref string) bool {
 	ref = strings.TrimSpace(ref)
 	return ref != "" && len(ref) <= 128 && !strings.ContainsAny(ref, "\r\n\x00")
+}
+
+func validJobID(job string) bool {
+	if len(job) != 18 || !strings.HasPrefix(job, "j-") {
+		return false
+	}
+	for _, r := range job[2:] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+type egressSSHAuthRequest struct {
+	Mode   string `json:"mode"`
+	Secret string `json:"secret,omitempty"`
+}
+
+func validateEgressSSHAuth(a egressSSHAuthRequest) error {
+	switch a.Mode {
+	case "auto":
+		return nil
+	case "password", "key":
+		if a.Secret == "" {
+			return fmt.Errorf("для выбранного способа SSH требуется пароль или private key")
+		}
+		if len(a.Secret) > 64<<10 || strings.ContainsRune(a.Secret, '\x00') {
+			return fmt.Errorf("некорректные SSH credentials")
+		}
+		return nil
+	default:
+		return fmt.Errorf("SSH auth mode: auto, password или key")
+	}
 }
 
 func (s *Server) registerEgressRoutes(mux *http.ServeMux, jwtSecret []byte) {
@@ -191,6 +232,150 @@ func (s *Server) registerEgressRoutes(mux *http.ServeMux, jwtSecret []byte) {
 
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "egress_node_update_failed", err.Error())
+			return
+		}
+		writeEgressJSON(w, out)
+	}))
+
+	mux.Handle("GET /api/egress/provisioner", protected(func(w http.ResponseWriter, r *http.Request) {
+		out, err := runEgressBridge(r.Context(), "provision-preflight")
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "egress_provisioner_failed", err.Error())
+			return
+		}
+		writeEgressJSON(w, out)
+	}))
+
+	mux.Handle("POST /api/egress/nodes", protected(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name     string               `json:"name"`
+			Host     string               `json:"host"`
+			Port     int                  `json:"port"`
+			User     string               `json:"user"`
+			Priority *int                 `json:"priority"`
+			Auth     egressSSHAuthRequest `json:"auth"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Некорректные параметры EXIT-ноды")
+			return
+		}
+		req.Name = strings.TrimSpace(req.Name)
+		req.Host = strings.TrimSpace(req.Host)
+		req.User = strings.TrimSpace(req.User)
+		if req.Name == "" || len(req.Name) > 64 || strings.ContainsAny(req.Name, "\r\n\x00") {
+			writeError(w, http.StatusBadRequest, "invalid_name", "Имя ноды должно содержать 1–64 символа")
+			return
+		}
+		if req.Host == "" || len(req.Host) > 253 || strings.ContainsAny(req.Host, " \t\r\n\x00") {
+			writeError(w, http.StatusBadRequest, "invalid_host", "Некорректный IP/домен SSH")
+			return
+		}
+		if req.Port == 0 {
+			req.Port = 22
+		}
+		if req.Port < 1 || req.Port > 65535 {
+			writeError(w, http.StatusBadRequest, "invalid_port", "SSH port должен быть 1–65535")
+			return
+		}
+		if req.User == "" {
+			req.User = "root"
+		}
+		if req.User != "root" {
+			writeError(w, http.StatusBadRequest, "invalid_user", "В текущей версии provisioning выполняется через root SSH")
+			return
+		}
+		if req.Priority != nil && (*req.Priority < 1 || *req.Priority > 9999) {
+			writeError(w, http.StatusBadRequest, "invalid_priority", "Priority должен быть от 1 до 9999")
+			return
+		}
+		if err := validateEgressSSHAuth(req.Auth); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_auth", err.Error())
+			return
+		}
+
+		payload := map[string]any{
+			"action": "add",
+			"name":   req.Name,
+			"host":   req.Host,
+			"port":   req.Port,
+			"user":   req.User,
+			"auth": map[string]any{
+				"mode":   req.Auth.Mode,
+				"secret": req.Auth.Secret,
+			},
+		}
+		if req.Priority != nil {
+			payload["priority"] = *req.Priority
+		}
+		raw, _ := json.Marshal(payload)
+		out, err := runEgressBridgeInput(r.Context(), raw, "job-start")
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "egress_add_start_failed", err.Error())
+			return
+		}
+		writeEgressJSON(w, out)
+	}))
+
+	mux.Handle("POST /api/egress/nodes/{node}/remove", protected(func(w http.ResponseWriter, r *http.Request) {
+		node := r.PathValue("node")
+		if !validNodeRef(node) {
+			writeError(w, http.StatusBadRequest, "invalid_node", "Некорректная нода")
+			return
+		}
+		var req struct {
+			RemoteCleanup bool                 `json:"remote_cleanup"`
+			Fallback      string               `json:"fallback"`
+			Auth          egressSSHAuthRequest `json:"auth"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Некорректные параметры удаления")
+			return
+		}
+		req.Fallback = strings.ToLower(strings.TrimSpace(req.Fallback))
+		if req.Fallback == "" {
+			req.Fallback = "block"
+		}
+		if req.Fallback != "block" && req.Fallback != "direct" {
+			writeError(w, http.StatusBadRequest, "invalid_fallback", "Fallback должен быть BLOCK или DIRECT")
+			return
+		}
+		if req.RemoteCleanup {
+			if err := validateEgressSSHAuth(req.Auth); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_auth", err.Error())
+				return
+			}
+		} else {
+			req.Auth = egressSSHAuthRequest{Mode: "auto"}
+		}
+
+		payload := map[string]any{
+			"action":         "remove",
+			"node":           node,
+			"remote_cleanup": req.RemoteCleanup,
+			"fallback":       req.Fallback,
+			"auth": map[string]any{
+				"mode":   req.Auth.Mode,
+				"secret": req.Auth.Secret,
+			},
+		}
+		raw, _ := json.Marshal(payload)
+		out, err := runEgressBridgeInput(r.Context(), raw, "job-start")
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "egress_remove_start_failed", err.Error())
+			return
+		}
+		writeEgressJSON(w, out)
+	}))
+
+	mux.Handle("GET /api/egress/jobs/{job}", protected(func(w http.ResponseWriter, r *http.Request) {
+		job := r.PathValue("job")
+		if !validJobID(job) {
+			writeError(w, http.StatusBadRequest, "invalid_job", "Некорректный job ID")
+			return
+		}
+		out, err := runEgressBridge(r.Context(), "job-status", job)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "egress_job_failed", err.Error())
 			return
 		}
 		writeEgressJSON(w, out)
