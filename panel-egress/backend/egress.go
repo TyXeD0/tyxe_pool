@@ -17,7 +17,7 @@ import (
 const egressBridge = "/usr/local/sbin/mtproxyl-egress-panel-bridge"
 
 func runEgressBridge(parent context.Context, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
 
 	full := append([]string{"-n", egressBridge}, args...)
@@ -54,8 +54,12 @@ func writeEgressJSON(w http.ResponseWriter, raw []byte) {
 		writeError(w, http.StatusBadGateway, "egress_invalid_json", "Некорректный ответ mtproxyl-egress")
 		return
 	}
-
 	writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: data})
+}
+
+func validNodeRef(ref string) bool {
+	ref = strings.TrimSpace(ref)
+	return ref != "" && len(ref) <= 128 && !strings.ContainsAny(ref, "\r\n\x00")
 }
 
 func (s *Server) registerEgressRoutes(mux *http.ServeMux, jwtSecret []byte) {
@@ -75,27 +79,118 @@ func (s *Server) registerEgressRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	mux.Handle("POST /api/egress/mode", protected(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Mode string `json:"mode"`
+			Node string `json:"node"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", `Ожидается {"mode":"auto"|"pl1"|"pl2"|"block"}`)
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", `Ожидается {"mode":"auto"|"direct"|"block"|"manual","node":"..."}`)
 			return
 		}
 
 		switch req.Mode {
-		case "auto", "pl1", "pl2", "block":
+		case "auto", "direct", "block":
+			if _, err := runEgressBridge(r.Context(), "mode", req.Mode); err != nil {
+				writeError(w, http.StatusBadGateway, "egress_mode_failed", err.Error())
+				return
+			}
+		case "manual":
+			if !validNodeRef(req.Node) {
+				writeError(w, http.StatusBadRequest, "invalid_node", "Для manual требуется корректная нода")
+				return
+			}
+			if _, err := runEgressBridge(r.Context(), "mode", "manual", req.Node); err != nil {
+				writeError(w, http.StatusBadGateway, "egress_mode_failed", err.Error())
+				return
+			}
 		default:
-			writeError(w, http.StatusBadRequest, "invalid_mode", "Режим: auto, pl1, pl2 или block")
-			return
-		}
-
-		if _, err := runEgressBridge(r.Context(), "mode", req.Mode); err != nil {
-			writeError(w, http.StatusBadGateway, "egress_mode_failed", err.Error())
+			writeError(w, http.StatusBadRequest, "invalid_mode", "Режим: auto, direct, block или manual")
 			return
 		}
 
 		out, err := runEgressBridge(r.Context(), "status")
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "egress_status_failed", err.Error())
+			return
+		}
+		writeEgressJSON(w, out)
+	}))
+
+	mux.Handle("POST /api/egress/nodes/{node}/test", protected(func(w http.ResponseWriter, r *http.Request) {
+		node := r.PathValue("node")
+		if !validNodeRef(node) {
+			writeError(w, http.StatusBadRequest, "invalid_node", "Некорректная нода")
+			return
+		}
+		out, err := runEgressBridge(r.Context(), "node-test", node)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "egress_node_test_failed", err.Error())
+			return
+		}
+		writeEgressJSON(w, out)
+	}))
+
+	mux.Handle("PATCH /api/egress/nodes/{node}", protected(func(w http.ResponseWriter, r *http.Request) {
+		node := r.PathValue("node")
+		if !validNodeRef(node) {
+			writeError(w, http.StatusBadRequest, "invalid_node", "Некорректная нода")
+			return
+		}
+
+		var req struct {
+			Name     *string `json:"name"`
+			Enabled  *bool   `json:"enabled"`
+			Priority *int    `json:"priority"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Некорректное изменение ноды")
+			return
+		}
+
+		mutations := 0
+		if req.Name != nil {
+			mutations++
+		}
+		if req.Enabled != nil {
+			mutations++
+		}
+		if req.Priority != nil {
+			mutations++
+		}
+		if mutations != 1 {
+			writeError(w, http.StatusBadRequest, "single_mutation_required", "За один запрос изменяется только одно свойство ноды")
+			return
+		}
+
+		var (
+			out []byte
+			err error
+		)
+
+		switch {
+		case req.Name != nil:
+			name := strings.TrimSpace(*req.Name)
+			if name == "" || len(name) > 64 || strings.ContainsAny(name, "\r\n\x00") {
+				writeError(w, http.StatusBadRequest, "invalid_name", "Имя ноды должно содержать 1–64 символа")
+				return
+			}
+			out, err = runEgressBridge(r.Context(), "node-rename", node, name)
+
+		case req.Enabled != nil:
+			if *req.Enabled {
+				out, err = runEgressBridge(r.Context(), "node-enable", node)
+			} else {
+				out, err = runEgressBridge(r.Context(), "node-disable", node)
+			}
+
+		case req.Priority != nil:
+			if *req.Priority < 1 || *req.Priority > 9999 {
+				writeError(w, http.StatusBadRequest, "invalid_priority", "Приоритет должен быть от 1 до 9999")
+				return
+			}
+			out, err = runEgressBridge(r.Context(), "node-priority", node, strconv.Itoa(*req.Priority))
+		}
+
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "egress_node_update_failed", err.Error())
 			return
 		}
 		writeEgressJSON(w, out)
