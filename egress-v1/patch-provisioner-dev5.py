@@ -29,7 +29,7 @@ helpers = r'''def cleanup_enter_nft(iface: str) -> None:
     for line in p.stdout.splitlines():
         if f'oifname "{iface}"' not in line:
             continue
-        m = re.search(r"# handle ([0-9]+)\\s*$", line)
+        m = re.search(r"# handle ([0-9]+)\s*$", line)
         if m:
             run([
                 "nft", "delete", "rule", "inet", "mtproxyl_egress", "postrouting",
