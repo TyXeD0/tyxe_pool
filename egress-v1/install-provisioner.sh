@@ -3,11 +3,14 @@ set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROV_SRC="$ROOT/provision.py"
+PATCHER="$ROOT/patch-provisioner-dev4.py"
 AGENT_SRC="$ROOT/node-agent.py"
 PROV_DST="/usr/local/libexec/mtproxyl-egress-provision"
 AGENT_DST="/usr/local/libexec/mtproxyl-node-agent-source"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="/root/mtproxyl-egress-provisioner-backup-$STAMP"
+TMP_PROV="$(mktemp /tmp/mtproxyl-egress-provision.XXXXXX.py)"
+trap 'rm -f "$TMP_PROV"' EXIT
 
 fail(){ echo "ERROR: $*" >&2; exit 1; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "Запусти от root."
@@ -15,7 +18,7 @@ fail(){ echo "ERROR: $*" >&2; exit 1; }
 for c in python3 systemctl install ssh apt-get; do
   command -v "$c" >/dev/null 2>&1 || fail "Не найдена команда: $c"
 done
-[[ -f "$PROV_SRC" && -f "$AGENT_SRC" ]] || fail "Provisioner assets missing"
+[[ -f "$PROV_SRC" && -f "$PATCHER" && -f "$AGENT_SRC" ]] || fail "Provisioner assets missing"
 [[ -x /usr/local/bin/mtproxyl-egress ]] || fail "Dynamic Egress CLI missing"
 systemctl is-active --quiet mtproxyl-egressd.service || fail "mtproxyl-egressd is not active"
 
@@ -28,8 +31,10 @@ echo
 echo "===== PRE-FLIGHT ====="
 /usr/local/bin/mtproxyl-egress status --json | python3 -m json.tool >/dev/null
 printf "Dynamic daemon: "; systemctl is-active mtproxyl-egressd.service
-python3 -m py_compile "$PROV_SRC" "$AGENT_SRC"
-echo "Source syntax: OK"
+python3 -m py_compile "$PROV_SRC" "$PATCHER" "$AGENT_SRC"
+python3 "$PATCHER" "$PROV_SRC" "$TMP_PROV"
+python3 -m py_compile "$TMP_PROV"
+echo "Source syntax/compatibility patch: OK"
 
 if ! command -v sshpass >/dev/null 2>&1; then
   echo
@@ -58,7 +63,7 @@ echo "Backup: $BACKUP"
 echo
 echo "===== INSTALL ====="
 install -d -m 755 /usr/local/libexec
-install -o root -g root -m 755 "$PROV_SRC" "$PROV_DST"
+install -o root -g root -m 755 "$TMP_PROV" "$PROV_DST"
 install -o root -g root -m 755 "$AGENT_SRC" "$AGENT_DST"
 install -d -o root -g root -m 700 /etc/mtproxyl-egress/ssh
 install -d -o root -g root -m 700 /var/lib/mtproxyl-egress/jobs
@@ -99,4 +104,5 @@ echo "============================================================"
 echo " PROVISIONER INSTALLED"
 echo "============================================================"
 echo "No EXIT node was changed by this installation."
+echo "Provisioner: $($PROV_DST --version)"
 echo "Rollback: /root/rollback-mtproxyl-egress-provisioner.sh"
