@@ -1,6 +1,6 @@
 // ── Custom egress manager ───────────────────────────────────────────────────
 
-export type EgressMode = 'auto' | 'pl1' | 'pl2' | 'block';
+export type EgressMode = 'auto' | 'direct' | 'block' | 'manual';
 
 export interface EgressAgentStatus {
   reachable: boolean;
@@ -53,6 +53,10 @@ export interface EgressSystemStatus {
 
 export interface EgressNodeStatus {
   id: string;
+  name: string;
+  migration_source?: string;
+  enabled: boolean;
+  priority: number;
   role: string;
   public_ip: string;
   health: boolean;
@@ -65,8 +69,10 @@ export interface EgressNodeStatus {
     tx_bytes?: number;
   };
   connectivity: {
+    tunnel?: boolean;
     tunnel_rtt_ms?: number | null;
     telegram: boolean;
+    telegram_tcp_ms?: number | null;
     routing?: boolean;
     nftables?: boolean;
   };
@@ -74,11 +80,24 @@ export interface EgressNodeStatus {
   system?: EgressSystemStatus | null;
 }
 
+export interface EgressTelemtStatus {
+  nat_ip?: string | null;
+  dc_available?: boolean | null;
+  dc_verdict?: string | null;
+  dc_coverage_pct?: number | null;
+  alive_writers?: number | null;
+  required_writers?: number | null;
+}
+
 export interface EgressStatus {
   version?: string;
   timestamp?: string;
+  phase?: string;
   mode: EgressMode;
+  manual_node?: string | null;
   active_node: string;
+  last_error?: string | null;
+  telemt?: EgressTelemtStatus;
   nodes: EgressNodeStatus[];
 }
 
@@ -94,10 +113,33 @@ const EGRESS_BASE = `${BASE}/api/egress`;
 export const egressApi = {
   status: () => request<EgressStatus>(EGRESS_BASE, '/status'),
 
-  setMode: (mode: EgressMode) =>
+  setMode: (mode: EgressMode, node?: string) =>
     request<EgressStatus>(EGRESS_BASE, '/mode', {
       method: 'POST',
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({ mode, node }),
+    }),
+
+  testNode: (node: string) =>
+    request<EgressNodeStatus>(EGRESS_BASE, `/nodes/${encodeURIComponent(node)}/test`, {
+      method: 'POST',
+    }),
+
+  renameNode: (node: string, name: string) =>
+    request<Record<string, unknown>>(EGRESS_BASE, `/nodes/${encodeURIComponent(node)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
+  setNodeEnabled: (node: string, enabled: boolean) =>
+    request<Record<string, unknown>>(EGRESS_BASE, `/nodes/${encodeURIComponent(node)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    }),
+
+  setNodePriority: (node: string, priority: number) =>
+    request<Record<string, unknown>>(EGRESS_BASE, `/nodes/${encodeURIComponent(node)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ priority }),
     }),
 
   config: () => request<EgressConfig>(EGRESS_BASE, '/config'),
