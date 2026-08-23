@@ -92,6 +92,24 @@ if old_probe not in s:
     raise SystemExit("candidate Telegram probe anchor not found")
 s = s.replace(old_probe, new_probe, 1)
 
+old_fw_enable = '''    ssh.exec("set -e; printf 'net.ipv4.ip_forward=1\\\\n' >/etc/sysctl.d/99-mtproxyl-egress.conf; sysctl --system >/dev/null; systemctl daemon-reload; systemctl enable --now mtproxyl-egress-node.service >/dev/null")\n'''
+new_fw_enable = '''    ssh.exec(r"""\nset -Eeuo pipefail\ninstall -d -m 700 /etc/mtproxyl-egress-node\nif [[ ! -f /etc/mtproxyl-egress-node/ip_forward.before ]]; then\n  sysctl -n net.ipv4.ip_forward > /etc/mtproxyl-egress-node/ip_forward.before\n  chmod 600 /etc/mtproxyl-egress-node/ip_forward.before\nfi\nprintf 'net.ipv4.ip_forward=1\\n' >/etc/sysctl.d/99-mtproxyl-egress.conf\nsysctl --system >/dev/null\nsystemctl daemon-reload\nsystemctl enable --now mtproxyl-egress-node.service >/dev/null\n""")\n'''
+if old_fw_enable not in s:
+    raise SystemExit("remote ip_forward setup anchor not found")
+s = s.replace(old_fw_enable, new_fw_enable, 1)
+
+old_agent_install = '''install -o root -g root -m 755 /tmp/mtproxyl-node-agent /usr/local/bin/mtproxyl-node-agent\nchown root:mtproxyl-node-agent /etc/mtproxyl-node-agent/config.env /etc/mtproxyl-node-agent/token\n'''
+new_agent_install = '''install -o root -g root -m 755 /tmp/mtproxyl-node-agent /usr/local/bin/mtproxyl-node-agent\nrm -f /tmp/mtproxyl-node-agent\nchown root:mtproxyl-node-agent /etc/mtproxyl-node-agent/config.env /etc/mtproxyl-node-agent/token\n'''
+if old_agent_install not in s:
+    raise SystemExit("remote agent install anchor not found")
+s = s.replace(old_agent_install, new_agent_install, 1)
+
+old_remote_cleanup_tail = '''rm -rf /etc/mtproxyl-node-agent\nrm -f /usr/local/bin/mtproxyl-node-agent /usr/local/sbin/mtproxyl-egress-node-firewall\nnft delete table inet mtproxyl_egress_node 2>/dev/null\nnft delete table inet mtproxyl_node_agent 2>/dev/null\nsystemctl daemon-reload\n'''
+new_remote_cleanup_tail = '''rm -rf /etc/mtproxyl-node-agent\nrm -f /usr/local/bin/mtproxyl-node-agent /usr/local/sbin/mtproxyl-egress-node-firewall /tmp/mtproxyl-node-agent\nnft delete table inet mtproxyl_egress_node 2>/dev/null\nnft delete table inet mtproxyl_node_agent 2>/dev/null\nBEFORE=""\nif [[ -f /etc/mtproxyl-egress-node/ip_forward.before ]]; then\n  BEFORE="$(cat /etc/mtproxyl-egress-node/ip_forward.before 2>/dev/null)"\nfi\nrm -f /etc/sysctl.d/99-mtproxyl-egress.conf\nif [[ "$BEFORE" =~ ^[01]$ ]]; then\n  sysctl -w net.ipv4.ip_forward="$BEFORE" >/dev/null 2>&1 || true\nelif ! grep -RqsE '^[[:space:]]*net\\.ipv4\\.ip_forward[[:space:]]*=[[:space:]]*1' /etc/sysctl.d /etc/sysctl.conf 2>/dev/null; then\n  sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>&1 || true\nfi\nrm -rf /etc/mtproxyl-egress-node\nid mtproxyl-node-agent >/dev/null 2>&1 && userdel mtproxyl-node-agent >/dev/null 2>&1 || true\nsystemctl daemon-reload\n'''
+if old_remote_cleanup_tail not in s:
+    raise SystemExit("remote cleanup tail anchor not found")
+s = s.replace(old_remote_cleanup_tail, new_remote_cleanup_tail, 1)
+
 old_remove = '''    run([str(REGISTRY), "validate"])\n    control({"action": "reload"})\n    event(f"node_remove id={node_id} name={n['name']!r} remote_cleanup={remote_result}")\n'''
 new_remove = '''    run([str(REGISTRY), "validate"])\n    control({"action": "reload"})\n    # Reload first so egressd no longer considers the removed node, then clean\n    # any stale per-interface NAT/routing state without a race that could add it back.\n    cleanup_enter_nft(str(n["awg_interface"]))\n    run(["ip", "route", "flush", "table", str(int(n["routing_table"]))], check=False)\n    event(f"node_remove id={node_id} name={n['name']!r} remote_cleanup={remote_result}")\n'''
 if old_remove not in s:
