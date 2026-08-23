@@ -7,7 +7,7 @@ Base upstream:
 - MTProxyL Panel v1.0.14
 - upstream commit `8e6ef1d598a2d4f3af2b4a81ac028b0f9ae7afe5`
 
-Custom panel version: `1.0.14-egress2`.
+Custom panel version: `1.0.14-egress3`.
 
 ## What it adds
 
@@ -18,6 +18,9 @@ Custom panel version: `1.0.14-egress2`.
 - expandable AWG, Telemt, agent, CPU, RAM, disk, network and uptime metrics;
 - AUTO / DIRECT / BLOCK plus manual selection of any healthy enabled node;
 - node test, rename, enable/disable and priority controls;
+- SSH wizard for adding clean Ubuntu 24.04 EXIT nodes;
+- safe node removal with optional remote SSH cleanup and BLOCK/DIRECT last-node fallback;
+- background add/remove jobs, so the web request does not stay open during provisioning;
 - Telemt writers, coverage and NAT IP status;
 - failover settings and recent egress events;
 - authenticated `/api/egress/*` endpoints.
@@ -25,12 +28,13 @@ Custom panel version: `1.0.14-egress2`.
 The panel remains unprivileged. State-changing actions go through one validated root bridge at
 `/usr/local/sbin/mtproxyl-egress-panel-bridge`, allowed by a dedicated sudoers rule.
 
-Adding/removing EXIT nodes over SSH is intentionally the next milestone; the button is visible but
-disabled until the provisioner is connected.
+SSH password/private key is sent to the bridge through stdin. For a background job it is held only
+in a mode-0600 request file below `/run/mtproxyl-egress/` (tmpfs) until the detached worker reads it,
+then the file is deleted. Credentials are not written to `nodes.d` or persistent job JSON.
 
 ## Install on ENTER
 
-Dynamic Egress v1 must already be active.
+Dynamic Egress v1 and the SSH provisioner must already be active/installed.
 
 ```bash
 rm -rf /tmp/tyxe_pool-panel && \
@@ -45,8 +49,8 @@ sudo bash /tmp/tyxe_pool-panel/panel-egress/install.sh
 sudo /root/rollback-mtproxyl-panel-egress.sh
 ```
 
-Rollback restores the previous Panel binary, bridge and sudoers integration. Dynamic Egress,
-AWG tunnels, routing and node-agents are not changed.
+Rollback restores the previous Panel binary, bridge, panel job-runner and sudoers integration.
+Dynamic Egress, the SSH provisioner, AWG tunnels, routing and node-agents are not changed.
 
 ## Updating
 
