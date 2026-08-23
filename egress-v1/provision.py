@@ -1,91 +1,783 @@
 #!/usr/bin/env python3
-# Packed single-file provisioner. Source is zlib+b85 encoded to keep deployment atomic.
-import base64, zlib
-_payload = (
-    b"c-rlKYjYdNwcvOBiZ<hT010oBdO(IMlmuCfB$7o^wzD9D8Uh1yOkid-GvFgMs_gjgCR@H0*WSCewO>-"
-    b"Ht@{UL$GTBsTlov%U%0<y&pF*a(>*f)LE71^ty;zrfPS9tK7HQZ{j+x}<G`=%+fK!Dj+u8B9=gtQZs5Bk*6j|);n=sjU1pCw*AJQ"
-    b"LIBsZ$w(A7BoJ{i%Jkt*>`Fr0CtXnJcSI>1q>ogqN`!dD$%zoduf<PvG61a~1?gqST&kPTtj_h{}e##<#)Kg&fd@GFF2@Z$WY4pS"
-    b"G9a&-YYrOCIZcphnIE%i9*2o*!!>HNN9>w3?(NKYX?BlPpZ@nB_LC8T3&pg{XkdUr9XSrN!_aSQ%(0QX`g}ursgzitzh9&C&M{X2y8=H?"
-    b">J5UIVR+!<qeJd#Ujoj|$)7C~Z!^rLIJn24K-UFR;Lymeee{7yRr)eVj`bVcl%FRD(AzIJAMC`Xj!nM;!$?9^`NZ8v(6(P}#AW@llL7s+&4*8+43-"
-    b"2~Aoth~04d5tm~{Z_gVx4wcW3j(_QO`(5~3O8n?vl|I<=Hp!9kYH1Ir0Zfjjnl7Ig9O**er!t09giLCHN@YdzoG=<c+(KU}BYj6{"
-    b")sIk5a=8`{k6wsv;A>swf;wsN;zTU{yFZrv`g)<o9U=JqaRuB<HQc0X8wZ|xj|KjUt#T&vzGuih$GEA_fjj8ayT33rkSHCab%saB"
-    b"85#eh^Xts2!`E!XZ+v1O&XdR1$#c4xJG`xex%Ve$$jcXAtR&s*JXoC)75_uP>On4R~HU$=j~cUrBM_D*Yqz0=!+&UvkPYi05-%=8PGyv!PFrT=7>ep4;o?UqYQ`6rt&S98nr;`P;KD!=}C?P2S(4jNRYwn{YsU9-vqewNx$+AJaXx2R|?*S7`?urv>JC}^;u9fa*5^gBg%qsVN>8;4yaKn(_o>{GVkIu<mHA4S^f?iliHCxpc1DxX*U>m6FXqXye|-67;WHirR}2MXC>eY;0J6tTsQ-eiH5?kmKm{1AX2TA|h7;t2#<gE|TQvqsdL2lbU|IGiXC|8Q(YErmwbjK`<vVoGz@A6t5I5cXlXO{J%;^{rN_jOF|D%ZPbvicdY0X0FL+Ov`}TYr_BI!~%V@PJ5Q8lIZd-Z?<*n*}m0hW`Jel$?{D*u-Nw4!R}kW@A~<H5iR98&Q-hGnHU8|^cm_>ReQie118pI9?)=LZB7p;4|}J{s&Vt9-d*`EAxqf58w9k1?KuZ4LVWN28MNNhwNN!aAM4Z724+m=M|VIaM%Q1WB0nq4fDwU8bmmYtZ#;<igmzY0J%rdkHp)md#hR{)I%KPB"
-    b"f%ERz?XrhmPbc@+t2eK0Y?j%71$_U_lSOScm{pg5hFxJ$q}JufZy|;Zw>6zrcpN7P2RL)jx6{NDFC4j_!9bgrO!ekjpS}n9`p_Y@"
-    b"I3Z}11Lm!Cw6#91^TXMIaI(nF>uGhgaUhQ8sl(Kx&vzp*f3~lc!e`o?vDXXoT?%lV6_0{7BlGCwm?Ogt3CkMtQWM(gYt=QhgRO$b"
-    b"BtupU^osA^Li@67@Rr1JY>TRIc~mCP)F!n-q7q>d6>u|&6Jp1+cAejWin{Mv2aul#-4}lD*qT--EhOl?%3%Q!W0@w0LISHc8;)%f"
-    b"{r`bn1(wM<@^5#ld<MFJOA&l`OADjOUrpq=r>fN677i~A7pI@*~ri}`(2VT^VANpPo35XenrGJD;wpcj-;@l9xxJZ%Y-k`szSFpXwVR!9;B#%kfQv-(B01)H_9k+8->KAd1YE<!{5(bPzO<vOX_7DQGO7wkJC1~xF!YyN=T=y9nf;qgO>YwN2AFBi1JoHkGzc?S!d0mIoj`=%xSPZ?4Z0;KCr?($i21;h;#;McbEPO1riEmzTHRB%_zX1m~KD`KHYiPAMxtxGujZ-GwcKNLm6mL?txB)2?8;3>HsX9JlP9wFZ>+Y2R<oiT`5V&Q*~&E0j`!q4L"
-    b"Dd`TYp%;7<y=*1Fv+>noR*$Cu$Tb!IsEl+mv6^mqtt|W&=~su5~|EiMZy6=5Q={rUCPBAB^2`zz|rR6AP#YDGJ#Ys2F1705?@ED8"
-    b"gD>K3@VS$yN28G_b8<KZvvd{1cN6I}fL+jlVjuxJ9LaScj+x{Z1CL9CLqY(Yl2|O%2*P9B1MzqO;6`&B}}c?pZ@?LqR_5iqNthr>"
-    b"48?doC1GVT;m|g}w3q5ZH<Bsiot@WO2|%yN7O|wH>8p6-G^2g_{pu$*I>18P&$1$;Exdl|;JXyKZPCD}n;tg-Gg03=$4P|xUOR7--{j#HDxNki?1W5=<EiFr$AC9C?@$PKORx~aTWWgt<&?YbdijSj1xl^P#v+cOqI%e#B~&PpM(a_AmeP8T_1a#1q!jnu+KRs&@tXa!Q"
-    b"FEYV9wzS>JiCFm&Ll|KPw2UX$xXac+X{CHw;LRw_UNDBFWFQAM9g$2C`LNgo(TqvJOs!;+$m972o**d_$>mW3x5>_-ik*3+KuNH-Z6pK+R%SL(}<fWn^sTL@{#KZFNCFU9^;x$yp%hl%cU_2a-%&<qr3rW36C6cytY!2-{w$JRop@BmtqYA?|NNl5#r~nP!gSkM>Xa}lA%{bOc7t-@bz!o!P8LYafED9nL7ZtHm5hUE(AmLKZ$su4MQPX%T5SS)2(4c?<sxTy$ImRAZr};Ytl~v*7s%uclkZ$mA-?z*oN>P<Lt!9y(M^&)@F3fua8;>#H!0CWQ{7_O6tt?13UXHCX?wL3Xwh}joHCR=vVR_jVMo<_wDP~Upg-zdH{BHXC;<M@N>9^B2YB`t|=(OK8LxXgOJmPT~|H-SH*%*8M%gRl3WOw%k4)Cgk1`?5q?8c3wlLqdv3?&5?PMguR-hgT#mQpqpDj"
-    b"G1BK39<nn&qKIA3#S^Eu3pBG|9=VG6y<;bW(`Y+Ug{rteKpK6kd3ddLK*U2Z@Og3l(pUcrHX1^d!DTdWf+{?2s7+CF!(U6^Xe>tW"
-    b"Iv@f)KOK1r#Z%L;*deQ38Mi8tKx{pEQ2{yz%p$rNV@r3)m)mG4YVtstofOi4tKBG9$~oeDpfn6p2t<O#{fV13&}(vX>^c&6{oFKT"
-    b")$y@yRDdnfs`OO71vS*NI&gGe{$!PB~IoIP?TYYb&AP6;ez@sG+A+PA(5D7}E3rrhqRwEPmh(ZBR5F6z<!lJJm*q<ZdsbUR=6tYn"
-    b"&4M6vHOwfV13lM<YO3-+GxTGRLbzN<LS!pfG3CQZqqSLKx1dEJ}yTvO<bXl|>0JSvEuR)9OfVl-t7<u8085WsB4QIsN|PD>nUM`gZ#5#g`3M`;X85_0|fT{vD{~@20OVemni);>(Nw%q~8kzL|bM{RYZ?H+^M9{hH31DyXP4pes|Dqb"
-    b"6nQW%FVEBLX>n1+XxH>(%sc2ofW>Uc(4p!;gzErvE;D4J9tVxcILygwLViH<0-H;<tu2SHiNd%oQ#O**WnGOt0yO0g{fqQ8waqP$cwJqg*y{7?^tr^sfQpw-=ug_xT&2+38=|`quGE1;+K34?}=S9yU%{H8fDP26Z?!_I{JsfzMm3tIMm`f@Npt2`)WmB<4$aPL%mVge+XU7eZ&jD8|I;G>pfzZg"
-    b"}PqGQkhmh{sFi5hj@RbDjx>JTnMRT%QDNQ0R@xwLk+j$KihttMN6$S%NL_1?0lQz`t)U{t2+{Z;<w1;PZ{4g9Jz(LqVo@1X3H83Z"
-    b"yX~+i{X)aaa?8;&XLPq8@RqGdlC_V<c%<LMJqr_RDLM;YI0M+7$wKcx-j0N)5W&@e1vp47pYlR%|5ykx#sAdtLFB@4ck;j8rv`Y&Eu5KDK<+pm5A9!c<_WqD?#o#n%M$mj(kV53utQ;t%(o<9s0~wli=EmZI>QiR`t<-Sv&uZuEO+^WoF(&hB<=?Rg>7287MGS31%RBtYEUnFXIz-J~uCg1n&K+MEgxoX~`1C;;fbL(QT`Ddo5gxpGK9VDDPKZ4R?IT#;!kKh+_weQJLe(5FOLm@<E2RZ81_v2kVP2I^?K4Vt}$Ogzg35"
-    b"Aqqxt|b7bq?q2Jr9#xWVrA#9f!u5p`z$$7?6S7D!#dIK5^A;X`NF7<cok5}fIXYN2+&%Wdp6<~C^BIm5jEpg3di2iYAe2A-DxXCHC+N}8^T_76^TP-OVWxmi#74WB9i0EOE2na%YWp!CywY@Mu=1Z?=YFHZ-JO_jLFd~nG`>Q778>sA&iPLS0dK&&~+TE7Ybi&v"
-    b"sO1!MRqJ72+-QlKDO4;kOuN%v$i_7+(UQlgwM^>W>#~6DZTIsfc?}udx%C7lyA)*l8KUIouq0Ej2EyPPjR$ZD?m3&^PEOMNjLw@J$PmvTf=5+dwX-+P>n<w`P9UzhA*}cf_u;P&hi=~p2vh|GrUI9iood)&OVkg3R!k<&08#sqBII39C00x@=!GW282#v!I<-kwKjHJ+lmJhM$$&MwY9dh6S+S4{*=IV;?fd7BES$eEU0&rXWdj#N14(svcvmUe+@<scx?B0Y*<tFQG{)~@0xzUM3z>w7Xl6##mu("
-    b"G`%qYKsOh*$VX;=jB%^QW!?=m#DA~fSDd|R`C_7q5H?SSrR<P*|&zffzA1&oQKq2lqh~1PdI}EJME@sw<$^h*}dNKLMIc`S4$ppd"
-    b"D6fdkrAtnk*#4xF=(8Hhy#8!HIZ=?cTYImx-BoZ82LyT`Rpz}jk3JmE3nn&|!;_15(If8NDWhEK`HIj=$R>aOqQ1=-6B8NcZ3Nn^QjoxYUffZAcCyFt(C<9Ci!g?y^Q93_Q4!XRRe5S|LHw+`NLRM;7W0!fhXAMjcA*@rP?vGjz*4H+=kGD5rpKUw>#B>y"
-    b"l&S7i`A0I0nGw6!luk@|siUW!PtKWaG#@>4`QKIy6Z1;|m<?b=We}D@}zURC97K_68AU`hq>8A`0<~dw|T$xeepBt2XYiI!)<xr("
-    b"$OYfeqKWdaFODNNg_kpU6KkZxlw&@huy?g8isQ<k~mo2?;&=E}@PmsnMj8_{woRBWD`|s87F^Y1j*Pxyin7y0{BpL8Sm|<AyEK0E"
-    b"*&=LW{(i!WSrJm)7_5ioD6|mmeAF=~y>>bom4jDNIJ_wJ4@C2A(2}bK-VJj$cbAyaUEe*}F(*v^9$AHkKq3w)MONW-(2idpuZhlNQhmv1d!c}N1qi%{pvraUtAkUT%P~Y<0zz$vi4B_-Vvmv7<;X9vH7LNp$"
-    b"Y{YJ_t}+Tn3=RR@3Sclu#s?^=9(V_=RN6;E0H2T%5Wi#5w=#zVL)oB!Z}pC;6kEMrzgxXizmsZ1Af3!-_p^GI0iGoQxeWE86_{o~C<+4g!V33_1Z5P1%6+XkCb9S5Z*4w?Ewazrfqmdu{nGwfbAgUJ>@W<ypi!w%Q*w1Eu)zt-julpv*{p~~"
-    b"7@!-BjZE9YE=z&m`#;?+j&@)#hPv^ti@udY*Bu79^X8S$&7=dlOZI;*z2y;HBhr5aA>;l;$jv8=Z?;sC3<~-s{WnhF{TZov3{C^ldqqrucwvApD~0-IkkFVEgTA2qv_weK5CH|nKoQ8L0IvQ+HedKh$mApfV?1?Jvw=yOyx+CSCx5PoSrio0nQURA)Ik?-vYPJyo!vr~{|KQ1NRV?nGdxHuss{;rz_PduSXxwX*Bc#OK;*3oGfp&ITu9!AmP3P@<$&TvyyT#h&gjfxgE*nqNjafs&z0K?Efh2y"
-    b"G*RbmZdJfyzUdrT`5GuftE*(Z7#Ou`xxTtwKDQ_3nxT)(<73v!)Kg^&+#nH&-@J1>P`1P@p?dni$Y}dD*-p{O^_ubFvGpxB{R^2<-$KUkrf)#Vegi`HKN|`Tl1rVYR`HrAUGde~(?mt0X$q-W7*Eq`y;_B-T3xPUlpc&M)P~M`PmZ3qdEL<q;F%cN+$oSTCNO~f$UM!rvqPdX$B(Kw2v*}^*o2`~Dy&w8{ZK2g8}LmP$HZPJa>OqxxIoK{IFpfx"
-    b"A@wwbVg#imM;N(b`sOG|`tf7h^U262ZCdPQSd9L@HFQt%%QduL=m4s2+@8_MsC64FttfgZwvVnv_|Q_#Q<16=lDL^$)cLaJ*sW!D"
-    b"SgTXfx>mHlaM8o;R_nEu+begLZ>`*-Nl+`)uUcXGsufliuP}*Bu|%#sknupAxQg~9a89UCGdz891V3kmfG}Aa#!Wy@;M^G+1&XM7pz@`00cF%G>!3_=e$J(F)T>H(zKBBK"
-    b"710~MOeVR6Oj@n7tn)>5poWXXrNQhH6*_kVpmb0@A-GV2ytF*P{SLAfJa1KgIfmKJi>WJ26k(fd7rTc*lUg6I?;>q7hv>mPW1v{T==MQw0>X9(vhwrYE$r?Yt%0U;ETa$vo7o8m%=me*=N"
-    b"PkkzJDp;d`jK{9d*tih5fROcK&!U<B=I0vFh#Hs6~KWcVIbK;Qm7G;1IT6JZQoMV_lC-9qj#u>VjUgz4>Cdg_UiOl~#yWTMPxzTABW*YlaMUBT&a{Qb~jscD5g4eSI32-lc|@pbD@RRN#%EQog}ZG~e6Hw|~t#H}>`l<r|f~y;=p>{!;Ey>%+y{0gz_3)5cOu??Q7+9Q{SZ>Hvd7_e3%aXxcnEV#fJ7b<N&gy"
-    b"@%K_nP6iQn%!T0-0H$KKU;s;ecJj}6QQFt0<Vj65GA!f-tDeGZpr~bttI$?B1-}+lDkEWu&`iAV~l3LNZ2JJ)9kT13{q!>VAD*Z0A6&=BWt7sC5oqBvl(KV=5{6Mg>Y{)$;pakbTN=Z+M1#=Hl2r}MPRd9DFm^7gis"
-    b"x4InFVgGxfy8au;t#5k9F#;S%ZNk7US1r!@!`Z&9!y_v-Y!i!V^xxcDtkcy;j^l=vRK)EA#!e938ua72EWwuSy}`i8B2^nvc6l}FDM4=s&agST@Dz`WycC_?H70Q@_$#U?$a0K{u@yJO_QH(2"
-    b"80_f+oB)3=z8u2N{>;-4VtuP_7|E}+Go43?-f7ze|8Pz8ooRNH$q{cA>R4R)R}uE~;SSi=%gpb@G8fX1F_`&k;AjBErtB!e4Cs|4+kQ$ExX6{Rn6GKyCo?<ebW%9qeCsT1xVy0lH"
-    b"{If5!h>_CjC=Q;!XK%9T!v{P_#;Y=03xCGcpNPm!SS$-Fqla)YsJ+Xu!pzRs_yHTWb5SGKus);j&(gU1v;83?a(sn1KdwX4~p&b%xxA+L2S}0<li}6e-YmE;F)5XXpm1PR-dcOMtExh$R^lM"
-    b"jW817(TM29m3)X{(l0(k&pU_7JjE$+-Z=Y=N{O9|MUstajg{IW;z(VVuIKItuWIFP^Oa&(*nzvDdfRL?U{DNkv4r>2$&YO?N5T}!Vg>pjux9Y*z@X!Q>3QTno$z8s~mXz43"
-    b"@KL*ZkdkZi|tQN(^%f%9iBvy;#(fSr&F#Zb`j86Wp^^Z-bXZ3fi-dLzpuA{l7>_Lo8vlgu-3SbAau(oKjsIi5y0=TB(Qwv06^u|G@`l{}ejRU2rb|M^F$kueS$^Olc5UwLHzEJRHY&8xT^=ZqXKu)`&pJ*u+k%K%Z-o`U_duA_WxDoY$igfKkmKqT2))e9n^QWG5pA()Zj0Yasv}D~uw##9L-8ni0pW|lU83*Izv-Ir!_l>Pz5rD9S=ae?tb3{^(+{zivX"
-    b"EhZ`L$l-{b!4h(u#gjRyJwg$<0ARNG)03J$N|b;r1$fvxdveh{30yD;9_nLFe0pgwCFpeOYDGT`Be>+MsIwBJG^CCz?Y~ne5a@>#2YL}Um%5"
-    b"J1f=jUcwFHCRny%MR<!8m{aZ*n_zf6k_(5o3<;C#J;%A{y?pypD)#BVssF27q=enYZ#XnlxUF$x$wbF#5Xf;q2BIp)(EjE%9E)-VcxUk)NzPZ~n^qV@0xFp4S7jN{NN;GRcI5CFUZ7#$Q2^*d{LE-$kIr}Dzl)7VR5weo^-(z00-<Av0$q{X8COBsn;{-Z9SW=i~zpY?S2YKgGQDdDN=Y+aCQ$!f(_|Ies@&x~DqX9^yNY2;h#vYj}cwU<udw8nga&5Hch?Kfasf&~+vdp0@^F)?8jLIy_lx3"
-    b"N+B2!i<1vpm3um(#Szv{P@UBGMWOe-oN=Bp0P&EQ<KIZP*qSks(;Ny$AdlNA<|h>AfBZDQF<9)RO?p>xwH<1T_$DAb=qk~j_}8QM(>L*m7FWQ_=Ux(rE2R%nV-Flze>LF*"
-    b"TzGv>UPoZNE!4vZ#f&T>QcfTU&Z!h596<`>*>OWKB8f(_SRq8Wj&(0y<g^g>`HC(N<JGKM5#d?6^GC#K(T)>P+{RH8ErqLR!l9lX"
-    b"VIzjF6(DQlK!6|mpX8e!M`I3p`T<_TMh+)%%GmnLLMh2Sz4qfyD2$J~`XhPz&RBl5~5d1%s3rf|vk-jl|i`fYO4M^4m?(iQ53iV^"
-    b"#~wKBV9Ue?GdLJWs4hV;ioTVSjOU{QklM{O6b5`__iSBU(9sTd4Cbg8Jx`CqPP2VsasL4Jm#;ad>+CGSAo$<vK&s54|Cm=#>31K%"
-    b"BcENk_WaTcF`$_s;b1X#xrF{@(E?l0ONE{N7#sdO--HsX1SADSv1x)_&G;vqKNzm3wB<ATNyTp|mm-XX^G;bJ$kTAzhzktkQ4SL9"
-    b"kva~#esitM@hn}=^<q+TeGv^F0bbPrY+&uBEyQPP{_9;|OX>aK4!&m%rP$*nzmw)s)(kr1<+=aM5$a(HD^6OX8pcVB|J!WIBQft9"
-    b"aoUwmfOlb1+EaJOGLcG$^1vN#4~uv%opCL0bNKo6~<1$@Il<N88wZ2;m*6KL#->mQX|hb(j<>@+LPePklX%g$@>@a{Xg-80W>1~y(Rl*8!9X4YbVfIA>Frv-#{2hEAi1%&=>i!6^#b9iE&1@b3w{boJ4;ci$bC~w(A>i}diibfLh*Y3!ZzhMP?;SNnJh8=?<CKI2)_RvZ_wS31K?v9CL1Q}V+-TpY4^U!rd-yPC`MGk_A9SN!Lu{pAbHdGVw>I^<#Y^;Br1KE*yM2BYH>OVMZj>f~#F5!Nc6Hi!`#%Yz~IfF353gLu}NmZAZq%a0{j"
-    b"v5aVIZz(Z;e%1644Ey3{NH1Pp?MH6TZGcyV}v{o-Pr)8&%=WWo8W&K>2qk>4kyl0O9OidHQAx-9*LaDQ(LN4s~|(WAou|)Qbg@NZep+p6hF0ePGSSbig_$Ra9F&{L=CRO_C3}ox#b-HRq_<Lgy4_~naumCV1u+irTqeDRe{vas@_jl?}hy6AVcH^!5GMOzvx>-JjtoHwiqyd-}UsV@La$~;ar!~;Q&I>T&S7Rd<1?E3S`bmJS47%E;J<|+q@hj2eUY2@L!D8F%bwduGizlU|{>!2?|pZ%YXI`k&NJwyEm<I4);Lc!"
-    b"kf<6{4J0b!<eoNL@=&S76HzsG9w^?qA_e@o~IKxslp)=Mvu#fz5uVts&-AT5luKcd3IrD4nXZij&Q~{)^-z2#PcIA@xX%3Wi7@+T+oFMU8M0C8%IsHPVEq*n6sJ00+Yn+xn5I|b{0g8#i_9#YC9gBWQE#dGC#1J@Qp%`9xJ_M#;<oMyTL?EdhF"
-    b"<hs${7Z1g?S<F9Yw?lIX>An4k>&);VQ6hAvZtnXI-3wxTliO(^SNC@-jgvs9_Y&`!~=E^8-4)XA)E2PHmZ&;Y1%uu&DQPSVD?<+CJ>AYi2-`BI_<Ql_kd0-kZHf~e~hx`vqYv~jPVoUsb*D>i+@6p5HZp#IKJ%wmvKbkq-M-q;gSm^9wJV!=*Yr<2BO+62N}9b2w5Ez(SPB}L|Kkg@c}FEe;2EZ5@F*hLQ@p}>rGZgJIYh4JCiT^`)zqF!u3CJ{_7YCgFb^mvAfk"
-    b"$E*9M^Uxq%HiV?w#c>7;JeZ&Xh+q!lQF_NR5&@B^IKQ|)5#x`!qn()*v>44R&Af|=Ak%0YF8e#hp+qa<>=7m{fU?bx{b?1Q53%|*"
-    b"Kgk<&zyQw4}C9muHK*01?*8Hijp%xcrer{Rv@S?-aQX_)qohwvC-rzVSdo=?YnpJq@Qx5W>dRSGd|Io(IN;c*)75sq@=WPF*Oy=v"
-    b"muC2V{hI##1#gXZx7D8j&+j1WM`_IICcijyygL<H*qa2r!6KOB@`42!#lc4*lWF@U-io8!Q&TI7^QV(0ZV+XDE%Y(HG)+|Q|*QtZ}#j*(C%`!l@%?l3}KOrPjl);u;pNASzf-b1zxyE^J6M7!a+pb((T!Fx{abhFe3G<>30{OUwqXd>lVV*F4e2mMn@QxP$3eBj`@dxD1hx8iuuVeXIu;ultCux=kxLYs46!(l6Fg"
-    b"1?$NM-3A>@|*ga*u0g^mC7MahB%cP4ex;k2EDm>_p5K12}pUdZy?Xi;Vj0e7A1bwZLaVmPTyKkk4$aWuYvFIwFzwiqzz5y2Y2N66&M+h;h"
-    b"=4*;Ad4;hx4F<|YFLhgP>hek$`p^x~WhD%nFY$nlb{~3qn|}gGcvPcNsU(?rg_9#ZaVJjjG|vq@^9OtXH+19=uOxb40aNm6@o6Vc"
-    b"GM17KCnvgxpL9~0<N~=*R_MU8ukQ!xfmO`xKKY$yT@AF@La5>ck4kzw{cAk;c%KEvEM0toH;GJtfT>4)Fb@qE%H1xicHM4jC1kv@"
-    b"5sGE*hCQ!K{z*bJq@i@*8lEu}PE#((MOUg&Y9SFI+Z$S@Gxo0H!;fiXLZ-OPjH^hucCeuMnWgMqp`Elee60rO%GW=(#cMUB2r;VR"
-    b"pVp=@ncL+5MK#?YMGAV#_gBdr2zipQnm<RepKb6~I-F^?yPEl9X6X#1TO_7Jf$$0j=mpECk@fo4i$!b73Nw}2OEtKJ=0@=&M6)>J0f`K|C^+V4QlePAf(0fi$|QNw<`+wmQ4YT#@{)wEqd"
-    b"$qFu~kl<kxxiinP=$KnBG`mnibePFjDr(D43TA_a4H(u*+tI_>TDN2m!Fl-eKMsrT2oH`Mv(l0_p&^W9jj}(Ces?QZ=>7;?t~(=L"
-    b"^nLQNjz~MrHEA<!gnGT)q?24!hhA0E8mU>%m}&Q|ie>>Y)2cnT%hhhjIb0qG&5>{`*)b9;zld5c}sA34SSpcEzVS8Ym&{%X_<$6D"
-    b"eAFry0eyr6-p2ZE-?8(&=a3IjCt$*~0b0;nd$;d`SVz7$E&7$_2Ul_4Ip^2gTiHUtlcpU)b8i-SrP!Wa0RQazDBFIx-y~DZaeBk6+q~29P6((;|{#&~w7!Pj<HrNqG3sjJT9Aef3OgT?v5lfIy4yYA=d(Y^&S)7^E5H_r`-la%~=9eL(8<&BV<_Gne4s=zcYtbqZuB6$azhKgVG3Z!bQB75MY?75;cjm&kp_Z_9!NP=6~ZkR4mf<sD~u6|JOvE_#QQyAo&J!k49"
-    b"`X58SXOm6mK^0@E#ipC;aCjHzR4DEwMA_mhx!3f^+kob$Q0G%G40V%V4tVOlZl7_g5mx2M-{j<16EPX{u@;q}+CrX+<Co&{*lMdMu;j8}sPlheyvO~qnZRE08f!%MiRejxc<KgsQC=~yDI(_hF`no}vu#jwz6N4A;y=AL6N%X%b"
-    b"_1bS~;r|`Vf5TNTM2{kEMaIt&$m{Ot;=6D7(FUO!e@%Gx8osWU4WWZ6Cy^rqLaf><mbAo?NSKEBbauSv;ufRSX}gswokPXbg7BwU"
-    b"b<lc;Z7D}9b6PyD(j1RV0SzrM2UdRhmWl>Z1atBxrj)%wiV7l{MZLF+B6Zd4(he{b%_n_6w$t#X#3>qksf<W5GGTA0>!rwzzDw>D"
-    b"qg$0y`-3jc<5=)F*b#p~C7okV;?a@BX`>9L@-l5Ljs&PwPKGYF=gc^OD9-C)hzOmp;EsJJ&mwAv@~ZdPWX};XV@r7T)aKK@J!fgpG15RNcVBCHDW+=hhN6SsC=;Y-AcFw&>-hwMQf*0i(WTgR-(LJTx<_)(3f6E5QN0q;W3-h27M(JBMK><d?!EX!W%~ET8n1D629NI0g-o#Z6N`&SQb}w}9#B<f;Alf@=$wh3DT7{YNJm2+wBJsh-RkI1GLaiuFDy?F=`EuXx{D_Rd0FMuS9H3Li%JQA=vqYnj78QBiSn0TEw$4~Y4Gv!fmxR&MgSHP1DtseVyfNfW<CWaMJ5X5{HuQDq"
-    b"LOY0U3|jC9Hx7SUQUn_C)G#*I<%u(B>VH5kfjp!18cF(k|{90C3Hp$)oVKK&(GjNsjunh@04p<g+1$AlqbnMJ;F<NcPmdHJ)Xb4m"
-    b"RI>Lq@+Ad|CL`)3%$NU`3P;4C?Aw0fn@wVUnzYOFo9!f-xA0F#2L3afUT@jh`$|{xX+5<`(wn<U&%d>@D$Syd4x1F`eknXjAJvITR!4{;?)qz|03?L@bvWQhO9q+(m^@gAboDckBiZH1|l|dr"
-    b"s!6kTx!5j)j9eTx7Tw?h|f<ceK;}uf;t`rn(0ctM2evyNy1Uo)?f7`@{wlY3bB47o^wWg8%NCDN0}_0doN;i(A~$0f%10nq;1+Cr"
-    b"HxUHpH^q?g4|glk01&;J_qo>)0G~?qzJ%R#ruZ!g?t`W(81%6jxMUPX(FB!$Hcp(6()6iauD+fXuX>1DUO>EV~)a$73Z!h>S8EdT"
-    b"FTK*4yCh&QGDj^O4pFD@HANZ5k>Lhf^b(hBB?sF8S%hQBgWT^wxWl18Zn*ElI7%+I&)i#E*)*my(fD{O$t75TpE;~QCq)GNgmY7E"
-    b"~g&DN|#99QPh}2>(ZAKsmH-GiffnjGz3k_fHHmpr$JBP%q*k4a>M5>#_2*P;>54s%*3wL%Qg)>b*hz{%-mD_W#QCD#8=gd`ukV-pkC%q)0C&Ql$ln}eI6Q|rH{`GtB9O=KW)5$W=)$zL+>IDJ+#bW$hEfr!O10FG4PeVU6qV9iZf3>3V>8K`O<KL&}G>zmsb-Ekd$Oy&s@l+IagHX-fWUK729U^>00+Bx`^tOY}luC1-S4Y^5>_EtlgoDs7~V>*Xa2IarcUP6;<*N#ai@Q!DPUv@JaGHFEnP#E@EO*xHmg|VKD=1rlEDV!8LJvFG97jkj<ZEz%VkBtp7}RX#"
-    b"JMUyODY4m9YN^49e79zr`E4*pt@Uv)w1ZN{ZM}4ev+EWQ*xjwKI7m7LbhbN3f_x7{FqzlM{3(qXz%5_e=NHSV|+SV#-U-Wv+HAr!$kLE1q;&Ig!zsM~xF!1&r=6`mjMTlxZo#jB|C)Cv=?&*@l15t$yFe;vCVTS4%od&UgSP825UX)u%VrIBqogM<MG<ex9|U"
-    b"b7JQ6rBV5e4NY3D<R;mBaURDi$cIlyb`T)r&Xh#21zCQs$odcL*d9cBNcMzeFjx@+aE)-rdiAH6t2yDH|G=5b41=T>dS`?({sevggJh9RrehBhM!gJht}_PBS{Oz7s3r#<WRbhVPQ5-L*Ay2EX}?>1*Gn=wO$;CkTS`Gfr@N!e;Af(2<a6Ubxof)JF7d7jMK*p6Sbr}o_Bt0bE}W%{S&4Jl+7<rF(_1QIN#8;nmq@;Vnw#y"
-    b"|P~Cq6G~S83snAx3&Z*ZR=e#9T-RI&etjNMB9370G?^NZNIU=f0$5Ob<PJOR<hFq%L1g!Yv`3pe$ySjzgt~~%0+BbVg$!9)fIuGo2@zP`^0u+RZ9=`H7f^B6EsjhgA6"
-    b"xWR(*XDWr1)?aM(s)dPDm=&2@iVr@QA75D1Ae}?@nY>6>zNJ;p!=2#2BX^(h16JP&n)v8)P+McR9YK}vqUh>)-j0FcuDM`B|>u8p&4Jth<+ifU!nldKAu;3Kz?`CKbjbKBZH3d1)D*|`O~QMUdAQQp=uWKc#WFK1bu+PnA?LW(@}$n=Jk<jHIJL)>%"
-    b"SnxivEzeYA*xRwaE?BaVIK{TywT1C5eRx(cZ!<kTp9CugZ^Fnc4mSm=%fwe`W+E6=wVV2L_LlVIqLzwRBXVUy+-*&v}CrHO3(|gzF1JS6I}lf?pX<7!p5ALNwrBP8lJTiVcz`W3+E4ZTQ4gV}3%s6>t5yR3hXyGT%H=_|e>_qt)FKRo3T;fQj-hhv6S"
-    b"4W&b!~IWy8R3H2f(G2O~d>ymm2yfb$eu3^kehETXi4Yu#PL;e0kbrCT)X1Thssyzaj;fq?0?*Gzo_)iyKqNg7ABzI}jWug=TNAAq"
-    b"%{!om@Nctr3Q73++A;XR$jP5a#MwWPS6RJ#)?EQty4fA?y3tQ&(YPwlI%bpRvR@IpMgjJTECVIq*&3LLY+qe@w{-)MTzPdQid@?J@M=nxEXhfzJG@${-)#s`~8WztoLF&<9+f<y1j`+z@?kN1d2s)W(piCVt$$}znA<ke>NjQE;1SQTsa}pf_(!(jUw5&@tt*dBTX)EReR{<u7MI)Z5Np2An"
-    b"oS~TDP$kh-l~<hYC0X6|&274=O`IV{0^3Cq>VO{+!?)fSRy5=LdHFl`j&(wSVIzeo3O*R`!z}bLPG*ZDXd{T)K<>*JUp5vlbz~Q`WL@I9-7Xq5D98k#Z)Zjq?-L+O1KlX5&mipEPE+k@eXFHqBePKQAGJQ*c=7C+R>boCON!uJ;TQwR$14+buNi4A-9bM{q|=>MagsQu900`(d3-)zpc3#mq9t<@>EcOC^{z?-Cl_!HKL`iu$Qh?`lVbD)K+v=8CT&*vHl%1#9-h-qbm_0li%@x*>imprM-vxm@}q0GoV*wH2pd9*(OSGln-8F)9Nvp^<X}1(uhR}hJ57F4SKsb&Y%-y(D)y=sMSOFrZfs*oRZmLI=_h%``((5QXlM%_+)L0*dJJ+=qBw&HaP`@UAC|}cgl&mO*_-EvV8Q8L=!iDe67FNnok&9zYI(_Lo=n`_rhnj>eqfc?{DU!G610WC{5;aVrjb0H6PcpKSON-=GQBdaUKjTsRSxofz=EdH8*ysJ<31Jf6iQMJUK}J4+?gdri+TB4bh{u-S}~Z)64#AoA<8zz$f&@a>XJBJRu}KH<D;gUSSFBqIG*T$pJlqAuNf0O<-951mQ*ScXdImYO17d5ObxA%?sw#*1&IJJ6}LWzpeTJRdwC8up!e9%C(1LWDva?O#vsl-HINB^ikFEa{a9<xIQToBX;4zc;wom+E4`Y&m?lC-yg5&qr)A^9Wu$A~E9Tb$>c_oye&rX>HN({<cGLJtdY%&7fhLzhAe#eC600))"
-    b"4iyvCuY`~Sr{>~h4sRBcRGAZjE|TAFSKuP2#kv0tf{mg!"
-)
-exec(compile(zlib.decompress(base64.b85decode(_payload)).decode("utf-8"), __file__, "exec"))
+from __future__ import annotations
+
+import argparse
+import base64
+import contextlib
+import fcntl
+import ipaddress
+import json
+import os
+from pathlib import Path
+import random
+import re
+import secrets
+import shlex
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+from typing import Any
+
+VERSION = "1.0.0-dev2"
+ETC = Path("/etc/mtproxyl-egress")
+NODES_DIR = ETC / "nodes.d"
+TOKENS_DIR = ETC / "nodes"
+SSH_DIR = ETC / "ssh"
+CONFIG = ETC / "config.toml"
+STATE_DIR = Path("/var/lib/mtproxyl-egress")
+JOBS_DIR = STATE_DIR / "jobs"
+EVENTS = STATE_DIR / "events.log"
+RUN_DIR = Path("/run/mtproxyl-egress")
+LOCK = RUN_DIR / "provision.lock"
+SOCKET = "/run/mtproxyl-egress/control.sock"
+AGENT_SOURCE = Path("/usr/local/libexec/mtproxyl-node-agent-source")
+REGISTRY = Path("/usr/local/libexec/mtproxyl-egress-registry")
+CLI = Path("/usr/local/bin/mtproxyl-egress")
+AGENT_PORT = 9784
+TEST_TELEGRAM_IP = "149.154.167.51"
+TEST_TELEGRAM_PORT = 443
+TG4 = [
+    "91.108.56.0/22",
+    "91.108.4.0/22",
+    "91.108.8.0/22",
+    "91.108.16.0/22",
+    "91.108.12.0/22",
+    "149.154.160.0/20",
+    "91.105.192.0/23",
+    "91.108.20.0/22",
+    "185.76.151.0/24",
+]
+
+
+def fail(msg: str) -> "NoReturn":
+    raise RuntimeError(msg)
+
+
+def run(args: list[str], *, input_text: str | None = None, timeout: float = 30, check: bool = True,
+        env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    p = subprocess.run(
+        args,
+        input=input_text,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+        env=env,
+    )
+    if check and p.returncode != 0:
+        msg = (p.stderr or p.stdout).strip()
+        fail(f"command failed ({p.returncode}): {args[0]}: {msg}")
+    return p
+
+
+def atomic_write(path: Path, text: str, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+
+
+def event(msg: str) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with EVENTS.open("a", encoding="utf-8") as f:
+        f.write(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + " " + msg + "\n")
+
+
+def load_toml(path: Path) -> dict[str, Any]:
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def load_nodes() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for p in sorted(NODES_DIR.glob("*.toml")):
+        n = load_toml(p)
+        n["_path"] = str(p)
+        out.append(n)
+    return sorted(out, key=lambda n: (int(n.get("priority", 999999)), str(n.get("id", ""))))
+
+
+def find_node(ref: str) -> dict[str, Any]:
+    folded = ref.casefold()
+    hits = []
+    for n in load_nodes():
+        if folded in {
+            str(n.get("id", "")).casefold(),
+            str(n.get("name", "")).casefold(),
+            str(n.get("migration_source", "")).casefold(),
+        }:
+            hits.append(n)
+    if len(hits) != 1:
+        fail("node not found or ambiguous")
+    return hits[0]
+
+
+def q(v: Any) -> str:
+    return json.dumps(str(v), ensure_ascii=False)
+
+
+def render_node(n: dict[str, Any]) -> str:
+    fields = [
+        ("id", q(n["id"])),
+        ("name", q(n["name"])),
+        ("enabled", "true" if bool(n.get("enabled", True)) else "false"),
+        ("priority", str(int(n["priority"]))),
+        ("endpoint", q(n.get("endpoint", ""))),
+        ("public_ip", q(n.get("public_ip", ""))),
+        ("ssh_host", q(n.get("ssh_host", n.get("public_ip", "")))),
+        ("ssh_port", str(int(n.get("ssh_port", 22)))),
+        ("ssh_user", q(n.get("ssh_user", "root"))),
+        ("awg_interface", q(n["awg_interface"])),
+        ("awg_port", str(int(n.get("awg_port", 0)))),
+        ("local_tunnel_ip", q(n["local_tunnel_ip"])),
+        ("remote_tunnel_ip", q(n["remote_tunnel_ip"])),
+        ("routing_table", str(int(n["routing_table"]))),
+        ("agent_port", str(int(n.get("agent_port", AGENT_PORT)))),
+        ("agent_token_file", q(n.get("agent_token_file", ""))),
+        ("provisioned", "true" if bool(n.get("provisioned", True)) else "false"),
+        ("migration_source", q(n.get("migration_source", ""))),
+    ]
+    return "\n".join(f"{k} = {v}" for k, v in fields) + "\n"
+
+
+def control(payload: dict[str, Any]) -> dict[str, Any]:
+    raw = (json.dumps(payload, ensure_ascii=False) + "\n").encode()
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(20)
+    try:
+        s.connect(SOCKET)
+        s.sendall(raw)
+        chunks: list[bytes] = []
+        while True:
+            b = s.recv(65536)
+            if not b:
+                break
+            chunks.append(b)
+            if b"\n" in b:
+                break
+    finally:
+        s.close()
+    if not chunks:
+        fail("egressd returned empty response")
+    reply = json.loads(b"".join(chunks).split(b"\n", 1)[0])
+    if not reply.get("ok"):
+        err = reply.get("error") or {}
+        fail(str(err.get("message") or "egressd request failed"))
+    return dict(reply.get("data") or {})
+
+
+def validate_name(name: str) -> str:
+    name = name.strip()
+    if not name or len(name) > 64 or any(ord(c) < 32 or ord(c) == 127 for c in name):
+        fail("node name must contain 1..64 printable characters")
+    if any(str(n.get("name", "")).casefold() == name.casefold() for n in load_nodes()):
+        fail("node name already exists")
+    return name
+
+
+def allocate(name: str, host: str, port: int, user: str, priority: int | None) -> dict[str, Any]:
+    nodes = load_nodes()
+    used_ids = {str(n.get("id")) for n in nodes}
+    while True:
+        node_id = "n-" + secrets.token_hex(4)
+        if node_id not in used_ids:
+            break
+    suffix = node_id[2:]
+    iface = "awg-" + suffix
+
+    used_slots: set[int] = set()
+    used_tables = {int(n.get("routing_table", 0)) for n in nodes}
+    for n in nodes:
+        for key in ("local_tunnel_ip", "remote_tunnel_ip"):
+            try:
+                ip = ipaddress.IPv4Address(str(n.get(key, "")))
+                parts = str(ip).split(".")
+                if parts[:2] == ["10", "253"]:
+                    used_slots.add(int(parts[2]))
+            except Exception:
+                pass
+    slot = next((i for i in range(1, 255) if i not in used_slots), None)
+    if slot is None:
+        fail("no free 10.253.x.0/30 tunnel slot")
+
+    table = 52000 + slot
+    while table in used_tables:
+        table += 256
+    if table > 65000:
+        fail("no free routing table")
+
+    if priority is None:
+        priority = (max([int(n.get("priority", 0)) for n in nodes], default=0) // 10 + 1) * 10
+    if not 1 <= priority <= 9999:
+        fail("priority must be 1..9999")
+    if any(int(n.get("priority", 0)) == priority for n in nodes):
+        fail("priority already in use")
+
+    return {
+        "id": node_id,
+        "name": name,
+        "enabled": True,
+        "priority": priority,
+        "endpoint": host,
+        "public_ip": "",
+        "ssh_host": host,
+        "ssh_port": port,
+        "ssh_user": user,
+        "awg_interface": iface,
+        "awg_port": random.SystemRandom().randint(20000, 59999),
+        "local_tunnel_ip": f"10.253.{slot}.1",
+        "remote_tunnel_ip": f"10.253.{slot}.2",
+        "routing_table": table,
+        "agent_port": AGENT_PORT,
+        "agent_token_file": str(TOKENS_DIR / f"{node_id}.token"),
+        "provisioned": True,
+        "migration_source": "",
+    }
+
+
+class SSH:
+    def __init__(self, host: str, port: int, user: str, auth: dict[str, Any]):
+        self.host = host
+        self.port = port
+        self.user = user
+        self.mode = str(auth.get("mode", "auto"))
+        if self.mode not in {"auto", "password", "key"}:
+            fail("auth mode must be auto/password/key")
+        self.secret = str(auth.get("secret") or "")
+        self.key_path = str(auth.get("key_path") or "")
+        self.temp_key: Path | None = None
+        SSH_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.known_hosts = SSH_DIR / "known_hosts"
+        self.base = [
+            "-o", "ConnectTimeout=10",
+            "-o", "ServerAliveInterval=10",
+            "-o", "ServerAliveCountMax=3",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", f"UserKnownHostsFile={self.known_hosts}",
+        ]
+        if self.mode == "auto":
+            self.base += ["-o", "BatchMode=yes"]
+        elif self.mode == "key":
+            p = Path(self.key_path) if self.key_path else None
+            if p and p.is_file():
+                key = p
+            else:
+                if not self.secret:
+                    fail("private key is empty")
+                RUN_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+                fd, tmp = tempfile.mkstemp(prefix="ssh-key-", dir=str(RUN_DIR))
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(self.secret.rstrip() + "\n")
+                self.temp_key = Path(tmp)
+                key = self.temp_key
+            self.base += ["-i", str(key), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes"]
+        elif self.mode == "password" and not self.secret:
+            fail("SSH password is empty")
+
+    def close(self) -> None:
+        if self.temp_key:
+            with contextlib.suppress(FileNotFoundError):
+                self.temp_key.unlink()
+
+    def _prefix(self, tool: str) -> tuple[list[str], dict[str, str] | None]:
+        env = None
+        cmd: list[str] = []
+        if self.mode == "password":
+            cmd += ["sshpass", "-e"]
+            env = dict(os.environ)
+            env["SSHPASS"] = self.secret
+        cmd.append(tool)
+        return cmd, env
+
+    def exec(self, script: str, *, timeout: float = 120) -> str:
+        cmd, env = self._prefix("ssh")
+        cmd += self.base + ["-p", str(self.port), f"{self.user}@{self.host}", "bash", "-s"]
+        return run(cmd, input_text=script, timeout=timeout, env=env).stdout.strip()
+
+    def copy(self, src: Path, dst: str, *, timeout: float = 60) -> None:
+        cmd, env = self._prefix("scp")
+        scp_opts: list[str] = []
+        i = 0
+        while i < len(self.base):
+            if self.base[i] == "-o":
+                scp_opts += self.base[i:i+2]
+                i += 2
+            elif self.base[i] == "-i":
+                scp_opts += self.base[i:i+2]
+                i += 2
+            else:
+                i += 1
+        cmd += scp_opts + ["-P", str(self.port), str(src), f"{self.user}@{self.host}:{dst}"]
+        run(cmd, timeout=timeout, env=env)
+
+
+def remote_write(ssh: SSH, path: str, text: str, mode: int = 0o600) -> None:
+    data = base64.b64encode(text.encode()).decode()
+    script = f"""
+set -Eeuo pipefail
+install -d -m 700 {shlex.quote(str(Path(path).parent))}
+printf '%s' {shlex.quote(data)} | base64 -d > {shlex.quote(path)}
+chmod {mode:o} {shlex.quote(path)}
+"""
+    ssh.exec(script)
+
+
+def awg_params() -> dict[str, int]:
+    r = random.SystemRandom()
+    jmin = r.randint(10, 40)
+    jmax = r.randint(max(jmin + 30, 50), 127)
+    hs: list[int] = []
+    while len(hs) < 4:
+        x = r.randint(1, 2_000_000_000)
+        if x not in hs:
+            hs.append(x)
+    return {
+        "Jc": r.randint(4, 12), "Jmin": jmin, "Jmax": jmax,
+        "S1": r.randint(20, 150), "S2": r.randint(20, 150),
+        "H1": hs[0], "H2": hs[1], "H3": hs[2], "H4": hs[3],
+    }
+
+
+def config_text(*, private: str, address: str, peer_public: str, allowed: str,
+                params: dict[str, int], listen: int | None = None, endpoint: str | None = None) -> str:
+    lines = [
+        "[Interface]",
+        f"PrivateKey = {private}",
+        f"Address = {address}/30",
+        "Table = off",
+        "AdvancedSecurity = on",
+    ]
+    if listen:
+        lines.append(f"ListenPort = {listen}")
+    for k in ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4"):
+        lines.append(f"{k} = {params[k]}")
+    lines += ["", "[Peer]", f"PublicKey = {peer_public}", f"AllowedIPs = {allowed}/32"]
+    if endpoint:
+        lines.append(f"Endpoint = {endpoint}")
+        lines.append("PersistentKeepalive = 25")
+    return "\n".join(lines) + "\n"
+
+
+def remote_packages(ssh: SSH) -> tuple[str, str]:
+    script = r'''
+set -Eeuo pipefail
+export DEBIAN_FRONTEND=noninteractive
+. /etc/os-release
+if [[ "${ID:-}" != "ubuntu" ]]; then
+  echo "unsupported_os:${ID:-unknown}" >&2
+  exit 78
+fi
+apt-get update -y >/dev/null
+apt-get install -y software-properties-common ca-certificates iproute2 nftables python3 >/dev/null
+if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
+  add-apt-repository -y ppa:amnezia/ppa >/dev/null
+  apt-get update -y >/dev/null
+  apt-get install -y amneziawg amneziawg-tools >/dev/null
+fi
+command -v awg
+command -v awg-quick
+ip -4 route show default | awk 'NR==1{print $5}'
+'''
+    out = ssh.exec(script, timeout=300).splitlines()
+    if len(out) < 3:
+        fail("cannot detect remote external interface")
+    return out[-1].strip(), "ubuntu"
+
+
+def remote_public_ip(ssh: SSH) -> str:
+    out = ssh.exec("set -e; ip -4 route get 1.1.1.1 | sed -n 's/.* src \\([0-9.]*\\).*/\\1/p' | head -n1")
+    ipaddress.IPv4Address(out.strip())
+    return out.strip()
+
+
+def remote_firewall(ssh: SSH, n: dict[str, Any], ext: str) -> None:
+    elems = ", ".join(TG4)
+    iface = n["awg_interface"]
+    local = n["local_tunnel_ip"]
+    remote = n["remote_tunnel_ip"]
+    port = int(n["agent_port"])
+    fw = f'''#!/usr/bin/env bash
+set -Eeuo pipefail
+nft delete table inet mtproxyl_egress_node 2>/dev/null || true
+nft -f - <<'NFT'
+table inet mtproxyl_egress_node {{
+  set tg4 {{ type ipv4_addr; flags interval; elements = {{ {elems} }} }}
+  chain forward {{
+    type filter hook forward priority filter; policy accept;
+    iifname "{iface}" ip saddr {local} ip daddr @tg4 accept
+    iifname "{iface}" drop
+  }}
+  chain postrouting {{
+    type nat hook postrouting priority srcnat; policy accept;
+    iifname "{iface}" oifname "{ext}" ip saddr {local} ip daddr @tg4 masquerade
+  }}
+}}
+NFT
+nft delete table inet mtproxyl_node_agent 2>/dev/null || true
+nft -f - <<'NFT'
+table inet mtproxyl_node_agent {{
+  chain input {{
+    type filter hook input priority filter; policy accept;
+    iifname "{iface}" ip saddr {local} ip daddr {remote} tcp dport {port} accept
+    ip daddr {remote} tcp dport {port} drop
+  }}
+}}
+NFT
+'''
+    remote_write(ssh, "/usr/local/sbin/mtproxyl-egress-node-firewall", fw, 0o755)
+    unit = '''[Unit]
+Description=MTProxyL EXIT firewall
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mtproxyl-egress-node-firewall
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+'''
+    remote_write(ssh, "/etc/systemd/system/mtproxyl-egress-node.service", unit, 0o644)
+    ssh.exec("set -e; printf 'net.ipv4.ip_forward=1\\n' >/etc/sysctl.d/99-mtproxyl-egress.conf; sysctl --system >/dev/null; systemctl daemon-reload; systemctl enable --now mtproxyl-egress-node.service >/dev/null")
+
+
+def remote_agent(ssh: SSH, n: dict[str, Any], token: str) -> None:
+    ssh.copy(AGENT_SOURCE, "/tmp/mtproxyl-node-agent")
+    cfg = (
+        f"NODE_NAME={n['name']}\n"
+        f"BIND_IP={n['remote_tunnel_ip']}\n"
+        f"PORT={int(n['agent_port'])}\n"
+        f"ALLOWED_SOURCE={n['local_tunnel_ip']}\n"
+    )
+    remote_write(ssh, "/etc/mtproxyl-node-agent/config.env", cfg, 0o640)
+    remote_write(ssh, "/etc/mtproxyl-node-agent/token", token + "\n", 0o640)
+    unit = '''[Unit]
+Description=MTProxyL EXIT node agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mtproxyl-node-agent
+Group=mtproxyl-node-agent
+ExecStart=/usr/local/bin/mtproxyl-node-agent
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run
+
+[Install]
+WantedBy=multi-user.target
+'''
+    remote_write(ssh, "/etc/systemd/system/mtproxyl-node-agent.service", unit, 0o644)
+    script = r'''
+set -Eeuo pipefail
+id mtproxyl-node-agent >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin mtproxyl-node-agent
+install -o root -g root -m 755 /tmp/mtproxyl-node-agent /usr/local/bin/mtproxyl-node-agent
+chown root:mtproxyl-node-agent /etc/mtproxyl-node-agent/config.env /etc/mtproxyl-node-agent/token
+chmod 640 /etc/mtproxyl-node-agent/config.env /etc/mtproxyl-node-agent/token
+systemctl daemon-reload
+systemctl enable --now mtproxyl-node-agent.service >/dev/null
+'''
+    ssh.exec(script)
+
+
+def remote_cleanup(ssh: SSH, iface: str) -> None:
+    script = f'''
+set +e
+systemctl disable --now mtproxyl-node-agent.service >/dev/null 2>&1
+systemctl disable --now mtproxyl-egress-node.service >/dev/null 2>&1
+systemctl disable --now awg-quick@{shlex.quote(iface)}.service >/dev/null 2>&1
+rm -f /etc/amnezia/amneziawg/{shlex.quote(iface)}.conf
+rm -f /etc/systemd/system/mtproxyl-node-agent.service /etc/systemd/system/mtproxyl-egress-node.service
+rm -rf /etc/mtproxyl-node-agent
+rm -f /usr/local/bin/mtproxyl-node-agent /usr/local/sbin/mtproxyl-egress-node-firewall
+nft delete table inet mtproxyl_egress_node 2>/dev/null
+nft delete table inet mtproxyl_node_agent 2>/dev/null
+systemctl daemon-reload
+'''
+    ssh.exec(script, timeout=60)
+
+
+def local_cleanup(n: dict[str, Any]) -> None:
+    iface = str(n["awg_interface"])
+    run(["systemctl", "disable", "--now", f"awg-quick@{iface}.service"], check=False)
+    with contextlib.suppress(FileNotFoundError):
+        (Path("/etc/amnezia/amneziawg") / f"{iface}.conf").unlink()
+    token = Path(str(n.get("agent_token_file", "")))
+    if token:
+        with contextlib.suppress(FileNotFoundError):
+            token.unlink()
+
+
+def ping_tunnel(iface: str, remote: str, timeout_sec: int = 30) -> float:
+    deadline = time.monotonic() + timeout_sec
+    last = ""
+    while time.monotonic() < deadline:
+        p = run(["ping", "-I", iface, "-c", "1", "-W", "1", remote], check=False, timeout=3)
+        last = p.stderr or p.stdout
+        if p.returncode == 0:
+            m = re.search(r"time[=<]([0-9.]+)\s*ms", p.stdout)
+            return float(m.group(1)) if m else 0.0
+        time.sleep(1)
+    fail("AWG tunnel ping failed: " + last.strip())
+
+
+def telegram_tcp(local_ip: str) -> float:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(5)
+    started = time.monotonic()
+    try:
+        s.bind((local_ip, 0))
+        s.connect((TEST_TELEGRAM_IP, TEST_TELEGRAM_PORT))
+        return round((time.monotonic() - started) * 1000, 1)
+    finally:
+        s.close()
+
+
+def agent_check(n: dict[str, Any], token: str) -> None:
+    import urllib.request
+    url = f"http://{n['remote_tunnel_ip']}:{int(n['agent_port'])}/health"
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
+    deadline = time.monotonic() + 20
+    last: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(req, timeout=3) as r:
+                data = json.loads(r.read())
+            if data.get("ok"):
+                return
+        except Exception as exc:
+            last = exc
+        time.sleep(1)
+    fail(f"node-agent health failed: {type(last).__name__ if last else 'unknown'}")
+
+
+def add_node(req: dict[str, Any]) -> dict[str, Any]:
+    name = validate_name(str(req.get("name") or ""))
+    host = str(req.get("host") or "").strip()
+    if not host or len(host) > 253 or any(c.isspace() for c in host):
+        fail("invalid SSH host")
+    port = int(req.get("port") or 22)
+    if not 1 <= port <= 65535:
+        fail("invalid SSH port")
+    user = str(req.get("user") or "root").strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,31}", user):
+        fail("invalid SSH user")
+    priority = req.get("priority")
+    n = allocate(name, host, port, user, int(priority) if priority is not None else None)
+    ssh = SSH(host, port, user, dict(req.get("auth") or {}))
+    local_cfg = Path("/etc/amnezia/amneziawg") / f"{n['awg_interface']}.conf"
+    registered = False
+    token = secrets.token_urlsafe(32)
+    try:
+        uid = ssh.exec("id -u").strip()
+        if uid != "0":
+            fail("SSH user must be root for the first provisioner version")
+        ext, _ = remote_packages(ssh)
+        n["public_ip"] = remote_public_ip(ssh)
+
+        local_priv = run(["awg", "genkey"]).stdout.strip()
+        local_pub = run(["awg", "pubkey"], input_text=local_priv + "\n").stdout.strip()
+        remote_priv = ssh.exec("umask 077; awg genkey").strip()
+        remote_pub = ssh.exec(f"printf '%s\\n' {shlex.quote(remote_priv)} | awg pubkey").strip()
+        params = awg_params()
+
+        local_text = config_text(
+            private=local_priv,
+            address=n["local_tunnel_ip"],
+            peer_public=remote_pub,
+            allowed=n["remote_tunnel_ip"],
+            params=params,
+            endpoint=f"{host}:{n['awg_port']}",
+        )
+        remote_text = config_text(
+            private=remote_priv,
+            address=n["remote_tunnel_ip"],
+            peer_public=local_pub,
+            allowed=n["local_tunnel_ip"],
+            params=params,
+            listen=int(n["awg_port"]),
+        )
+
+        remote_write(ssh, f"/etc/amnezia/amneziawg/{n['awg_interface']}.conf", remote_text, 0o600)
+        ssh.exec(f"systemctl daemon-reload; systemctl enable --now awg-quick@{shlex.quote(n['awg_interface'])}.service")
+
+        local_cfg.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(local_cfg, local_text, 0o600)
+        run(["systemctl", "daemon-reload"])
+        run(["systemctl", "enable", "--now", f"awg-quick@{n['awg_interface']}.service"])
+
+        remote_firewall(ssh, n, ext)
+        remote_agent(ssh, n, token)
+
+        rtt = ping_tunnel(str(n["awg_interface"]), str(n["remote_tunnel_ip"]))
+        tg_ms = telegram_tcp(str(n["local_tunnel_ip"]))
+        agent_check(n, token)
+
+        TOKENS_DIR.mkdir(parents=True, exist_ok=True)
+        atomic_write(Path(str(n["agent_token_file"])), token + "\n", 0o600)
+        NODES_DIR.mkdir(parents=True, exist_ok=True)
+        atomic_write(NODES_DIR / f"{n['id']}.toml", render_node(n), 0o600)
+        registered = True
+
+        run([str(REGISTRY), "validate"])
+        control({"action": "reload"})
+        time.sleep(1)
+        test = control({"action": "node_test", "node": str(n["id"])})
+        if not test.get("health"):
+            fail("node was registered but dynamic health check is DOWN")
+        event(f"node_add id={n['id']} name={name!r} host={host} priority={n['priority']}")
+        return {
+            "id": n["id"], "name": n["name"], "public_ip": n["public_ip"],
+            "priority": n["priority"], "interface": n["awg_interface"],
+            "tunnel_rtt_ms": rtt, "telegram_tcp_ms": tg_ms, "health": True,
+        }
+    except Exception:
+        if registered:
+            with contextlib.suppress(FileNotFoundError):
+                (NODES_DIR / f"{n['id']}.toml").unlink()
+            with contextlib.suppress(Exception):
+                control({"action": "reload"})
+        local_cleanup(n)
+        with contextlib.suppress(Exception):
+            remote_cleanup(ssh, str(n["awg_interface"]))
+        raise
+    finally:
+        ssh.close()
+
+
+def wait_not_active(node_id: str, timeout: int = 45) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        st = control({"action": "status"})
+        if st.get("active_node") != node_id:
+            return
+        time.sleep(1)
+    fail("timed out waiting for production to leave node")
+
+
+def remove_node(req: dict[str, Any]) -> dict[str, Any]:
+    ref = str(req.get("node") or "")
+    n = find_node(ref)
+    node_id = str(n["id"])
+    nodes = load_nodes()
+    status = control({"action": "status"})
+    fallback = str(req.get("fallback") or "").casefold()
+    enabled_other = [x for x in nodes if str(x["id"]) != node_id and bool(x.get("enabled", True))]
+
+    if status.get("mode") == "manual" and status.get("manual_node") == node_id:
+        control({"action": "set_mode", "mode": "auto"})
+    if status.get("active_node") == node_id:
+        if enabled_other:
+            control({"action": "set_mode", "mode": "auto"})
+            control({"action": "node_disable", "node": node_id})
+            wait_not_active(node_id)
+        else:
+            if fallback not in {"block", "direct"}:
+                fail("deleting the last active node requires fallback=block or direct")
+            control({"action": "set_mode", "mode": fallback})
+            wait_not_active(node_id)
+    else:
+        with contextlib.suppress(Exception):
+            control({"action": "node_disable", "node": node_id})
+
+    remote_result = "not_requested"
+    auth = dict(req.get("auth") or {})
+    if bool(req.get("remote_cleanup")):
+        ssh = SSH(str(n.get("ssh_host") or n.get("public_ip")), int(n.get("ssh_port", 22)), str(n.get("ssh_user", "root")), auth)
+        try:
+            remote_cleanup(ssh, str(n["awg_interface"]))
+            remote_result = "ok"
+        except Exception as exc:
+            remote_result = f"failed:{type(exc).__name__}"
+        finally:
+            ssh.close()
+
+    local_cleanup(n)
+    with contextlib.suppress(FileNotFoundError):
+        Path(str(n["_path"])).unlink()
+    run([str(REGISTRY), "validate"])
+    control({"action": "reload"})
+    event(f"node_remove id={node_id} name={n['name']!r} remote_cleanup={remote_result}")
+    return {"id": node_id, "name": n["name"], "removed": True, "remote_cleanup": remote_result}
+
+
+def preflight() -> dict[str, Any]:
+    checks: dict[str, Any] = {}
+    for p in (CLI, REGISTRY, AGENT_SOURCE, CONFIG):
+        checks[str(p)] = p.exists()
+    checks["socket"] = Path(SOCKET).exists()
+    checks["awg"] = run(["bash", "-lc", "command -v awg"], check=False).returncode == 0
+    checks["awg_quick"] = run(["bash", "-lc", "command -v awg-quick"], check=False).returncode == 0
+    checks["ssh"] = run(["bash", "-lc", "command -v ssh"], check=False).returncode == 0
+    checks["sshpass"] = run(["bash", "-lc", "command -v sshpass"], check=False).returncode == 0
+    if not all(checks.values()):
+        fail("preflight failed: " + ", ".join(k for k, v in checks.items() if not v))
+    st = control({"action": "status"})
+    return {"ok": True, "version": VERSION, "nodes": len(st.get("nodes") or []), "active": st.get("active_node")}
+
+
+def locked_call(action: str, req: dict[str, Any]) -> dict[str, Any]:
+    RUN_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with LOCK.open("w") as f:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fail("another add/remove operation is already running")
+        if action == "add":
+            return add_node(req)
+        if action == "remove":
+            return remove_node(req)
+        fail("unknown action")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="MTProxyL Dynamic Egress SSH provisioner")
+    ap.add_argument("--version", action="store_true")
+    sub = ap.add_subparsers(dest="cmd")
+    sub.add_parser("preflight")
+    p = sub.add_parser("request", help="read one JSON request from stdin")
+    p.add_argument("--pretty", action="store_true")
+    args = ap.parse_args()
+
+    if args.version:
+        print(f"mtproxyl-egress-provision {VERSION}")
+        return
+    if args.cmd == "preflight":
+        print(json.dumps(preflight(), ensure_ascii=False, indent=2))
+        return
+    if args.cmd == "request":
+        req = json.load(sys.stdin)
+        action = str(req.get("action") or "")
+        if action not in {"add", "remove"}:
+            fail("request action must be add/remove")
+        result = locked_call(action, req)
+        print(json.dumps(result, ensure_ascii=False, indent=2 if args.pretty else None))
+        return
+    ap.print_help()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1)
